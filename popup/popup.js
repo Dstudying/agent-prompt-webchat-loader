@@ -8,7 +8,6 @@ const SUPPORTED_SITES = {
 
 const state = {
   bindings: new Map(),
-  permissions: new Map(),
   tabId: null,
   origin: null,
   supported: false
@@ -17,23 +16,21 @@ const state = {
 const elements = {
   feedback: document.getElementById("feedback"),
   global: {
-    authorize: document.getElementById("global-authorize"),
     choose: document.getElementById("global-choose"),
     clear: document.getElementById("global-clear"),
     file: document.getElementById("global-file"),
-    permission: document.getElementById("global-permission")
+    status: document.getElementById("global-storage")
   },
   importButton: document.getElementById("import-button"),
   shortcutSettings: document.getElementById("shortcut-settings"),
   shortcutValue: document.getElementById("shortcut-value"),
   site: {
-    authorize: document.getElementById("site-authorize"),
     card: document.getElementById("site-card"),
     choose: document.getElementById("site-choose"),
     clear: document.getElementById("site-clear"),
     description: document.getElementById("site-description"),
     file: document.getElementById("site-file"),
-    permission: document.getElementById("site-permission")
+    status: document.getElementById("site-storage")
   },
   siteStatus: document.getElementById("site-status")
 };
@@ -75,38 +72,28 @@ function clearFeedback() {
   elements.feedback.className = "feedback";
 }
 
-function permissionLabel(permission) {
-  if (permission === "granted") {
-    return "已授权";
-  }
-  if (permission === "prompt") {
-    return "需授权";
-  }
-  return "权限失效";
-}
-
 async function renderBinding(key, controls) {
-  const binding = await AgentFileStore.getBinding(key);
+  const storedBinding = await AgentFileStore.getBinding(key);
+  const binding = await AgentFileStore.refreshBinding(storedBinding);
   if (!binding) {
     state.bindings.delete(key);
-    state.permissions.delete(key);
     controls.file.textContent = "尚未选择文件";
     controls.file.title = "";
-    controls.permission.textContent = "未绑定";
-    controls.permission.className = "status-pill";
-    controls.authorize.disabled = true;
+    controls.status.textContent = "未保存";
+    controls.status.className = "status-pill";
+    controls.choose.textContent = "选择文件";
     controls.clear.disabled = true;
     return;
   }
 
-  const permission = await AgentFileStore.queryReadPermission(binding.handle);
+  const hasCachedContent = typeof binding.content === "string";
+  const name = binding.name || binding.handle?.name || "AGENTS.md";
   state.bindings.set(key, binding);
-  state.permissions.set(key, permission);
-  controls.file.textContent = binding.handle.name;
-  controls.file.title = binding.handle.name;
-  controls.permission.textContent = permissionLabel(permission);
-  controls.permission.className = `status-pill ${permission}`;
-  controls.authorize.disabled = permission === "granted";
+  controls.file.textContent = name;
+  controls.file.title = name;
+  controls.status.textContent = hasCachedContent ? "已保存" : "需重新选择";
+  controls.status.className = `status-pill ${hasCachedContent ? "stored" : "stale"}`;
+  controls.choose.textContent = hasCachedContent ? "替换文件" : "选择文件";
   controls.clear.disabled = false;
 }
 
@@ -143,17 +130,14 @@ async function chooseFile(key) {
       }]
     });
     const handle = handles[0];
-    const permission = await AgentFileStore.requestReadPermission(handle);
-    if (permission !== "granted") {
-      showFeedback("未获得文件读取权限，文件没有被绑定。", "error");
-      return;
-    }
+    const file = await handle.getFile();
+    const content = await file.text();
 
-    await AgentFileStore.putBinding(key, handle);
-    if (handle.name.toLowerCase() !== "agents.md") {
-      showFeedback(`已绑定 ${handle.name}；建议使用标准文件名 AGENTS.md。`, "info");
+    await AgentFileStore.putBinding(key, handle, file.name, content);
+    if (file.name.toLowerCase() !== "agents.md") {
+      showFeedback(`已保存 ${file.name}；建议使用标准文件名 AGENTS.md。`, "info");
     } else {
-      showFeedback("AGENTS.md 已绑定。", "success");
+      showFeedback("AGENTS.md 已保存到扩展本地。", "success");
     }
     await render();
   } catch (error) {
@@ -163,58 +147,31 @@ async function chooseFile(key) {
   }
 }
 
-async function authorizeFile(key) {
-  clearFeedback();
-  const binding = state.bindings.get(key) || await AgentFileStore.getBinding(key);
-  if (!binding) {
-    showFeedback("请先选择一个 AGENTS.md。", "error");
-    return false;
-  }
-
-  const permission = await AgentFileStore.requestReadPermission(binding.handle);
-  await render();
-  if (permission !== "granted") {
-    showFeedback("没有获得文件读取权限。", "error");
-    return false;
-  }
-
-  showFeedback(`${binding.handle.name} 已重新授权。`, "success");
-  return true;
-}
-
 async function clearBinding(key) {
   clearFeedback();
   await AgentFileStore.deleteBinding(key);
   state.bindings.delete(key);
-  state.permissions.delete(key);
-  showFeedback("文件绑定已清除。", "success");
+  showFeedback("本地保存的文件已清除。", "success");
   await render();
 }
 
-async function ensureEffectivePermissions() {
+function ensureEffectiveBindings() {
   const keys = ["global", state.origin];
   const bindings = keys
     .map((key) => ({ key, binding: state.bindings.get(key) }))
     .filter((entry) => entry.binding);
 
   if (bindings.length === 0) {
-    showFeedback("请先绑定全局或当前网站的 AGENTS.md。", "error");
+    showFeedback("请先选择并保存全局或当前网站的 AGENTS.md。", "error");
     return false;
   }
 
-  const permissions = await Promise.all(bindings.map(({ binding }) => (
-    AgentFileStore.requestReadPermission(binding.handle)
-  )));
-
-  const deniedIndex = permissions.findIndex((permission) => permission !== "granted");
-  bindings.forEach(({ key }, index) => {
-    state.permissions.set(key, permissions[index]);
-  });
-
-  if (deniedIndex >= 0) {
-    const deniedBinding = bindings[deniedIndex].binding;
-    await render();
-    showFeedback(`${deniedBinding.handle.name} 未获得读取权限，请在浏览器提示中允许访问。`, "error");
+  const unavailable = bindings.find(({ binding }) => typeof binding.content !== "string");
+  if (unavailable) {
+    const name = unavailable.binding.name
+      || unavailable.binding.handle?.name
+      || "AGENTS.md";
+    showFeedback(`${name} 尚未保存正文，请重新选择该文件。`, "error");
     return false;
   }
 
@@ -230,7 +187,7 @@ async function importAgents() {
 
   elements.importButton.disabled = true;
   try {
-    if (!await ensureEffectivePermissions()) {
+    if (!ensureEffectiveBindings()) {
       return;
     }
 
@@ -254,7 +211,6 @@ async function importAgents() {
 
 function bindControls(key, controls) {
   controls.choose.addEventListener("click", () => chooseFile(key));
-  controls.authorize.addEventListener("click", () => authorizeFile(key));
   controls.clear.addEventListener("click", () => clearBinding(key));
 }
 
@@ -287,7 +243,7 @@ async function initialize() {
   try {
     await Promise.all([render(), renderShortcut()]);
   } catch (_error) {
-    showFeedback("无法读取本地文件绑定，请重新加载扩展。", "error");
+    showFeedback("无法读取扩展本地保存的文件，请重新加载扩展。", "error");
   }
 }
 

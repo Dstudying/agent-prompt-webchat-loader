@@ -34,7 +34,7 @@
   "commands": {
     "inject-agents": {
       "suggested_key": {
-        "default": "Alt+Shift+I"
+        "default": "Ctrl+I"
       },
       "description": "将 AGENTS.md 导入当前聊天输入框"
     }

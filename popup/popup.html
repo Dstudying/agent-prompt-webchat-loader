@@ -22,12 +22,11 @@
             <h2 id="global-title">全局规范</h2>
             <p>所有支持的网站都会导入</p>
           </div>
-          <span id="global-permission" class="status-pill">未绑定</span>
+          <span id="global-storage" class="status-pill">未保存</span>
         </div>
         <p id="global-file" class="file-name">尚未选择文件</p>
         <div class="button-row">
           <button id="global-choose" class="button secondary" type="button">选择文件</button>
-          <button id="global-authorize" class="button ghost" type="button">授权</button>
           <button id="global-clear" class="button danger" type="button">清除</button>
         </div>
       </section>
@@ -38,12 +37,11 @@
             <h2 id="site-title">网站专属规范</h2>
             <p id="site-description">仅在当前网站追加导入</p>
           </div>
-          <span id="site-permission" class="status-pill">未绑定</span>
+          <span id="site-storage" class="status-pill">未保存</span>
         </div>
         <p id="site-file" class="file-name">尚未选择文件</p>
         <div class="button-row">
           <button id="site-choose" class="button secondary" type="button">选择文件</button>
-          <button id="site-authorize" class="button ghost" type="button">授权</button>
           <button id="site-clear" class="button danger" type="button">清除</button>
         </div>
       </section>
@@ -65,7 +63,7 @@
         <span id="shortcut-value" class="shortcut">读取中…</span>
       </button>
 
-      <p class="privacy">文件只在本机读取；扩展不会自动发送消息。</p>
+      <p class="privacy">文件正文保存在扩展本地；扩展不会自动发送消息。</p>
     </main>
 
     <script src="../lib/file-store.js"></script>

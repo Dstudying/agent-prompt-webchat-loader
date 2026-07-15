@@ -42,34 +42,25 @@ async function getTargetTab(tabId) {
 }
 
 async function readBoundFile(key, scope, origin) {
-  const binding = await AgentFileStore.getBinding(key);
-  if (!binding) {
+  const storedBinding = await AgentFileStore.getBinding(key);
+  if (!storedBinding) {
     return null;
   }
 
-  const permission = await AgentFileStore.queryReadPermission(binding.handle);
-  if (permission !== "granted") {
+  const binding = await AgentFileStore.refreshBinding(storedBinding);
+  if (typeof binding.content !== "string") {
+    const name = binding.name || binding.handle?.name || "AGENTS.md";
     throw new ImportFailure(
-      "PERMISSION_REQUIRED",
-      `${binding.handle.name} 的读取权限不可用，请打开扩展并点击“导入到当前输入框”完成授权。`
-    );
-  }
-
-  let file;
-  try {
-    file = await binding.handle.getFile();
-  } catch (_error) {
-    throw new ImportFailure(
-      "FILE_UNAVAILABLE",
-      `${binding.handle.name} 无法读取，请检查文件是否被移动或删除。`
+      "FILE_RESELECTION_REQUIRED",
+      `${name} 尚未保存正文，请打开扩展并重新选择该文件。`
     );
   }
 
   return {
     scope,
     origin,
-    name: file.name,
-    content: await file.text()
+    name: binding.name || binding.handle?.name || "AGENTS.md",
+    content: binding.content
   };
 }
 
@@ -88,7 +79,7 @@ async function readEffectiveSources(origin) {
   if (sources.length === 0) {
     throw new ImportFailure(
       "NO_BINDING",
-      "尚未绑定 AGENTS.md，请先在扩展弹窗中选择文件。"
+      "尚未保存 AGENTS.md，请先在扩展弹窗中选择文件。"
     );
   }
 
@@ -150,7 +141,7 @@ async function importAgents(tabId) {
     const sources = await readEffectiveSources(origin);
     const block = AgentInstructions.buildInstructionBlock(sources);
     if (!block) {
-      throw new ImportFailure("EMPTY_FILES", "已绑定的 AGENTS.md 内容为空。");
+      throw new ImportFailure("EMPTY_FILES", "已保存的 AGENTS.md 内容为空。");
     }
 
     const response = await sendToContentScript(tab.id, {

@@ -20,6 +20,12 @@
       "[contenteditable='true'][data-slate-editor='true']",
       "[contenteditable='true'][role='textbox']",
       "textarea[placeholder*='发送']"
+    ],
+    "https://www.qianwen.com": [
+      "[data-chat-input-body='true'] [data-slate-editor='true']",
+      "[data-testid='chat-input-content-measure'] [contenteditable='true']",
+      "[data-chat-input-shell='true'] [contenteditable='true'][role='textbox']",
+      "[contenteditable='true'][data-slate-editor='true']"
     ]
   };
 
@@ -100,15 +106,16 @@
 
     dispatchEditorEvents(editor);
     editor.focus();
-    editor.setSelectionRange(0, 0);
-    editor.scrollTop = 0;
+    const endPosition = value.length;
+    editor.setSelectionRange(endPosition, endPosition);
+    editor.scrollTop = editor.scrollHeight;
   }
 
-  function placeCaretAtStart(editor) {
+  function placeCaretAtEnd(editor) {
     const selection = window.getSelection();
     const range = document.createRange();
     range.selectNodeContents(editor);
-    range.collapse(true);
+    range.collapse(false);
     selection.removeAllRanges();
     selection.addRange(range);
   }
@@ -134,8 +141,8 @@
     }
 
     dispatchEditorEvents(editor);
-    placeCaretAtStart(editor);
-    editor.scrollTop = 0;
+    placeCaretAtEnd(editor);
+    editor.scrollTop = editor.scrollHeight;
   }
 
   function setEditorText(editor, value) {

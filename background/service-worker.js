@@ -4,7 +4,8 @@ importScripts("../lib/file-store.js", "../lib/instruction-block.js");
 
 const SUPPORTED_ORIGINS = new Set([
   "https://chat.deepseek.com",
-  "https://www.doubao.com"
+  "https://www.doubao.com",
+  "https://www.qianwen.com"
 ]);
 
 class ImportFailure extends Error {
@@ -50,7 +51,7 @@ async function readBoundFile(key, scope, origin) {
   if (permission !== "granted") {
     throw new ImportFailure(
       "PERMISSION_REQUIRED",
-      `${binding.handle.name} 的读取权限已失效，请打开扩展重新授权。`
+      `${binding.handle.name} 的读取权限不可用，请打开扩展并点击“导入到当前输入框”完成授权。`
     );
   }
 
@@ -142,7 +143,7 @@ async function importAgents(tabId) {
     if (!SUPPORTED_ORIGINS.has(origin)) {
       throw new ImportFailure(
         "UNSUPPORTED_SITE",
-        "当前网站暂不支持，仅可在 DeepSeek 和豆包中使用。"
+        "当前网站暂不支持，仅可在 DeepSeek、豆包和千问中使用。"
       );
     }
 

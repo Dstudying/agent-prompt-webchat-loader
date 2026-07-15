@@ -2,10 +2,13 @@
 
 const SUPPORTED_SITES = {
   "https://chat.deepseek.com": "DeepSeek",
-  "https://www.doubao.com": "豆包"
+  "https://www.doubao.com": "豆包",
+  "https://www.qianwen.com": "千问"
 };
 
 const state = {
+  bindings: new Map(),
+  permissions: new Map(),
   tabId: null,
   origin: null,
   supported: false
@@ -85,6 +88,8 @@ function permissionLabel(permission) {
 async function renderBinding(key, controls) {
   const binding = await AgentFileStore.getBinding(key);
   if (!binding) {
+    state.bindings.delete(key);
+    state.permissions.delete(key);
     controls.file.textContent = "尚未选择文件";
     controls.file.title = "";
     controls.permission.textContent = "未绑定";
@@ -95,6 +100,8 @@ async function renderBinding(key, controls) {
   }
 
   const permission = await AgentFileStore.queryReadPermission(binding.handle);
+  state.bindings.set(key, binding);
+  state.permissions.set(key, permission);
   controls.file.textContent = binding.handle.name;
   controls.file.title = binding.handle.name;
   controls.permission.textContent = permissionLabel(permission);
@@ -158,7 +165,7 @@ async function chooseFile(key) {
 
 async function authorizeFile(key) {
   clearFeedback();
-  const binding = await AgentFileStore.getBinding(key);
+  const binding = state.bindings.get(key) || await AgentFileStore.getBinding(key);
   if (!binding) {
     showFeedback("请先选择一个 AGENTS.md。", "error");
     return false;
@@ -178,32 +185,39 @@ async function authorizeFile(key) {
 async function clearBinding(key) {
   clearFeedback();
   await AgentFileStore.deleteBinding(key);
+  state.bindings.delete(key);
+  state.permissions.delete(key);
   showFeedback("文件绑定已清除。", "success");
   await render();
 }
 
 async function ensureEffectivePermissions() {
   const keys = ["global", state.origin];
-  let bindingCount = 0;
+  const bindings = keys
+    .map((key) => ({ key, binding: state.bindings.get(key) }))
+    .filter((entry) => entry.binding);
 
-  for (const key of keys) {
-    const binding = await AgentFileStore.getBinding(key);
-    if (!binding) {
-      continue;
-    }
-    bindingCount += 1;
-
-    const permission = await AgentFileStore.requestReadPermission(binding.handle);
-    if (permission !== "granted") {
-      showFeedback(`${binding.handle.name} 需要重新授权后才能导入。`, "error");
-      return false;
-    }
-  }
-
-  if (bindingCount === 0) {
+  if (bindings.length === 0) {
     showFeedback("请先绑定全局或当前网站的 AGENTS.md。", "error");
     return false;
   }
+
+  const permissions = await Promise.all(bindings.map(({ binding }) => (
+    AgentFileStore.requestReadPermission(binding.handle)
+  )));
+
+  const deniedIndex = permissions.findIndex((permission) => permission !== "granted");
+  bindings.forEach(({ key }, index) => {
+    state.permissions.set(key, permissions[index]);
+  });
+
+  if (deniedIndex >= 0) {
+    const deniedBinding = bindings[deniedIndex].binding;
+    await render();
+    showFeedback(`${deniedBinding.handle.name} 未获得读取权限，请在浏览器提示中允许访问。`, "error");
+    return false;
+  }
+
   return true;
 }
 

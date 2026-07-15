@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "AGENTS.md 对话导入器",
   "version": "1.0.0",
-  "description": "将本地 AGENTS.md 规范导入 DeepSeek 或豆包聊天输入框。",
+  "description": "将本地 AGENTS.md 规范导入 DeepSeek、豆包或千问聊天输入框。",
   "permissions": [
     "storage",
     "activeTab",
@@ -16,7 +16,8 @@
   },
   "host_permissions": [
     "https://chat.deepseek.com/*",
-    "https://www.doubao.com/*"
+    "https://www.doubao.com/*",
+    "https://www.qianwen.com/*"
   ],
   "background": {
     "service_worker": "background/service-worker.js"
@@ -42,7 +43,8 @@
     {
       "matches": [
         "https://chat.deepseek.com/*",
-        "https://www.doubao.com/*"
+        "https://www.doubao.com/*",
+        "https://www.qianwen.com/*"
       ],
       "js": [
         "lib/instruction-block.js",

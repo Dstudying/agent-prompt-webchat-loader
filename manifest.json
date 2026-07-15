@@ -1,0 +1,54 @@
+{
+  "manifest_version": 3,
+  "name": "AGENTS.md 对话导入器",
+  "version": "1.0.0",
+  "description": "将本地 AGENTS.md 规范导入 DeepSeek 或豆包聊天输入框。",
+  "permissions": [
+    "storage",
+    "activeTab",
+    "scripting"
+  ],
+  "icons": {
+    "16": "assets/icons/icon-16.png",
+    "32": "assets/icons/icon-32.png",
+    "48": "assets/icons/icon-48.png",
+    "128": "assets/icons/icon-128.png"
+  },
+  "host_permissions": [
+    "https://chat.deepseek.com/*",
+    "https://www.doubao.com/*"
+  ],
+  "background": {
+    "service_worker": "background/service-worker.js"
+  },
+  "action": {
+    "default_title": "导入 AGENTS.md",
+    "default_popup": "popup/popup.html",
+    "default_icon": {
+      "16": "assets/icons/icon-16.png",
+      "32": "assets/icons/icon-32.png",
+      "48": "assets/icons/icon-48.png"
+    }
+  },
+  "commands": {
+    "inject-agents": {
+      "suggested_key": {
+        "default": "Alt+Shift+I"
+      },
+      "description": "将 AGENTS.md 导入当前聊天输入框"
+    }
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://chat.deepseek.com/*",
+        "https://www.doubao.com/*"
+      ],
+      "js": [
+        "lib/instruction-block.js",
+        "content/content.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}

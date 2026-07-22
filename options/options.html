@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>AGENTS.md 导入器设置</title>
+    <link rel="stylesheet" href="options.css">
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <img src="../assets/icons/icon-48.png" alt="">
+        <div>
+          <h1>AGENTS.md 导入器</h1>
+          <p>管理网页对话中使用的规范配置</p>
+        </div>
+      </div>
+      <div class="toolbar">
+        <button id="export-button" class="button secondary" type="button">导出 JSON</button>
+        <button id="import-button" class="button secondary" type="button">导入 JSON</button>
+        <input id="import-input" type="file" accept="application/json,.json" hidden>
+      </div>
+    </header>
+
+    <main class="workspace">
+      <aside class="profile-sidebar" aria-label="配置列表">
+        <div class="sidebar-heading">
+          <div>
+            <h2>配置</h2>
+            <span id="profile-count">0 条</span>
+          </div>
+          <div class="add-actions">
+            <button id="add-text" class="button primary" type="button">添加文本</button>
+            <button id="add-file" class="button secondary" type="button">添加文件</button>
+            <input id="fallback-file-input" type="file" accept=".md,.txt,text/markdown,text/plain" multiple hidden>
+          </div>
+        </div>
+        <div id="profile-list" class="profile-list"></div>
+        <p id="empty-list" class="empty-list">尚无配置。添加文本或选择 AGENTS.md 文件开始使用。</p>
+      </aside>
+
+      <section class="editor-pane" aria-labelledby="editor-title">
+        <div id="empty-editor" class="empty-editor">
+          <h2>选择一条配置</h2>
+          <p>可编辑正文、网站范围、插入位置和页面快捷键。</p>
+        </div>
+
+        <form id="profile-form" hidden>
+          <div class="editor-heading">
+            <div>
+              <span id="source-badge" class="source-badge">文本</span>
+              <h2 id="editor-title">编辑配置</h2>
+            </div>
+            <label class="toggle-label">
+              <input id="enabled-input" type="checkbox">
+              <span>启用</span>
+            </label>
+          </div>
+
+          <label class="field">
+            <span>配置名称</span>
+            <input id="name-input" type="text" maxlength="120" autocomplete="off" required>
+          </label>
+
+          <div id="text-section" class="field">
+            <label for="content-input">规范正文</label>
+            <textarea id="content-input" rows="16" spellcheck="false"></textarea>
+          </div>
+
+          <div id="file-section" class="file-source" hidden>
+            <div>
+              <span class="field-label">来源文件</span>
+              <strong id="file-name">AGENTS.md</strong>
+              <p id="file-status">已保存正文快照</p>
+            </div>
+            <button id="rebind-file" class="button secondary" type="button">重新关联</button>
+          </div>
+
+          <fieldset class="field-group">
+            <legend>适用网站</legend>
+            <div class="check-grid">
+              <label><input id="site-all" type="checkbox"> 全部支持的网站</label>
+              <label><input class="site-option" type="checkbox" value="https://chat.deepseek.com"> DeepSeek</label>
+              <label><input class="site-option" type="checkbox" value="https://www.doubao.com"> 豆包</label>
+              <label><input class="site-option" type="checkbox" value="https://www.qianwen.com"> 千问</label>
+            </div>
+          </fieldset>
+
+          <fieldset class="field-group">
+            <legend>插入位置</legend>
+            <div class="segmented">
+              <label><input type="radio" name="placement" value="prepend"> 插入首行</label>
+              <label><input type="radio" name="placement" value="append"> 插入末尾</label>
+            </div>
+          </fieldset>
+
+          <div class="field-group shortcut-group">
+            <div>
+              <span class="field-label">页面快捷键</span>
+              <p>点击录制后按下组合键；至少包含 Ctrl、Alt 或 Meta。</p>
+            </div>
+            <div class="shortcut-controls">
+              <button id="shortcut-recorder" class="shortcut-recorder" type="button">点击录制</button>
+              <button id="clear-shortcut" class="button ghost" type="button">清除</button>
+            </div>
+          </div>
+
+          <div id="feedback" class="feedback" role="status" aria-live="polite"></div>
+
+          <div class="form-actions">
+            <button id="delete-button" class="button danger" type="button">删除配置</button>
+            <button class="button primary save-button" type="submit">保存配置</button>
+          </div>
+        </form>
+      </section>
+    </main>
+
+    <script src="../lib/profile-model.js"></script>
+    <script src="../lib/profile-store.js"></script>
+    <script src="options.js"></script>
+  </body>
+</html>

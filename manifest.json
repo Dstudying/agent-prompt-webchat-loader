@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "AGENTS.md 对话导入器",
-  "version": "1.0.0",
-  "description": "将本地 AGENTS.md 规范导入 DeepSeek、豆包或千问聊天输入框。",
+  "version": "2.0.0",
+  "description": "管理多条 AGENTS.md 或文本规范，并按配置插入网页聊天输入框。",
   "permissions": [
     "storage",
     "activeTab",
@@ -31,6 +31,10 @@
       "48": "assets/icons/icon-48.png"
     }
   },
+  "options_ui": {
+    "page": "options/options.html",
+    "open_in_tab": true
+  },
   "commands": {
     "inject-agents": {
       "suggested_key": {
@@ -47,6 +51,7 @@
         "https://www.qianwen.com/*"
       ],
       "js": [
+        "lib/profile-model.js",
         "lib/instruction-block.js",
         "content/content.js"
       ],

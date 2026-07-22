@@ -1,12 +1,12 @@
 "use strict";
 
-importScripts("../lib/file-store.js", "../lib/instruction-block.js");
+importScripts(
+  "../lib/profile-model.js",
+  "../lib/profile-store.js",
+  "../lib/instruction-block.js"
+);
 
-const SUPPORTED_ORIGINS = new Set([
-  "https://chat.deepseek.com",
-  "https://www.doubao.com",
-  "https://www.qianwen.com"
-]);
+const SUPPORTED_ORIGINS = new Set(AgentProfileModel.SUPPORTED_ORIGINS);
 
 class ImportFailure extends Error {
   constructor(code, message) {
@@ -18,9 +18,9 @@ class ImportFailure extends Error {
 
 function resultFromError(error) {
   return {
-    ok: false,
     code: error.code || "UNKNOWN_ERROR",
-    message: error.message || "导入失败，请稍后重试。"
+    message: error.message || "导入失败，请稍后重试。",
+    ok: false
   };
 }
 
@@ -36,54 +36,61 @@ async function getTargetTab(tabId) {
   if (Number.isInteger(tabId)) {
     return chrome.tabs.get(tabId);
   }
-
   const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
   return tabs[0] || null;
 }
 
-async function readBoundFile(key, scope, origin) {
-  const storedBinding = await AgentFileStore.getBinding(key);
-  if (!storedBinding) {
-    return null;
+function ensureSupportedTab(tab) {
+  if (!tab || !Number.isInteger(tab.id)) {
+    throw new ImportFailure("NO_ACTIVE_TAB", "没有找到当前活动标签页。");
   }
-
-  const binding = await AgentFileStore.refreshBinding(storedBinding);
-  if (typeof binding.content !== "string") {
-    const name = binding.name || binding.handle?.name || "AGENTS.md";
+  const origin = getOrigin(tab.url);
+  if (!SUPPORTED_ORIGINS.has(origin)) {
     throw new ImportFailure(
-      "FILE_RESELECTION_REQUIRED",
-      `${name} 尚未保存正文，请打开扩展并重新选择该文件。`
+      "UNSUPPORTED_SITE",
+      "当前网站暂不支持，仅可在 DeepSeek、豆包和千问中使用。"
     );
   }
+  return origin;
+}
 
+async function resolveProfile(profile) {
+  const refreshed = await AgentProfileStore.refreshProfile(profile);
+  if (typeof refreshed.content !== "string" || !refreshed.content.trim()) {
+    throw new ImportFailure(
+      "EMPTY_PROFILE",
+      `${refreshed.name} 的规范正文为空，请先在设置页中补充内容。`
+    );
+  }
   return {
-    scope,
-    origin,
-    name: binding.name || binding.handle?.name || "AGENTS.md",
-    content: binding.content
+    content: refreshed.content,
+    id: refreshed.id,
+    name: refreshed.name,
+    placement: refreshed.placement
   };
 }
 
-async function readEffectiveSources(origin) {
-  const sources = [];
-  const globalSource = await readBoundFile("global", "global", origin);
-  if (globalSource) {
-    sources.push(globalSource);
-  }
+async function getProfilesForOrigin(origin, profileId = null) {
+  const profiles = await AgentProfileStore.getAllProfiles();
+  const matches = profiles.filter((profile) => (
+    profile.enabled
+    && AgentProfileModel.matchesOrigin(profile.sites, origin)
+    && (!profileId || profile.id === profileId)
+  ));
 
-  const siteSource = await readBoundFile(origin, "site", origin);
-  if (siteSource) {
-    sources.push(siteSource);
-  }
-
-  if (sources.length === 0) {
+  if (profileId && matches.length === 0) {
     throw new ImportFailure(
-      "NO_BINDING",
-      "尚未保存 AGENTS.md，请先在扩展弹窗中选择文件。"
+      "PROFILE_UNAVAILABLE",
+      "该配置不存在、未启用或不适用于当前网站。"
     );
   }
-
-  return sources;
+  if (!profileId && matches.length === 0) {
+    throw new ImportFailure(
+      "NO_PROFILES",
+      "当前网站没有可用配置，请先在扩展设置页中添加。"
+    );
+  }
+  return Promise.all(matches.map(resolveProfile));
 }
 
 async function sendToContentScript(tabId, message) {
@@ -91,65 +98,47 @@ async function sendToContentScript(tabId, message) {
     return await chrome.tabs.sendMessage(tabId, message);
   } catch (_error) {
     await chrome.scripting.executeScript({
-      target: { tabId },
-      files: ["lib/instruction-block.js", "content/content.js"]
+      files: [
+        "lib/profile-model.js",
+        "lib/instruction-block.js",
+        "content/content.js"
+      ],
+      target: { tabId }
     });
     return chrome.tabs.sendMessage(tabId, message);
   }
 }
 
-async function showPageToast(tabId, message, kind = "error") {
-  try {
-    await sendToContentScript(tabId, {
-      type: "SHOW_TOAST",
-      message,
-      kind
-    });
-  } catch (_error) {
-    await showBadge(tabId, "!", message);
-  }
-}
-
 async function showBadge(tabId, text, title) {
-  await chrome.action.setBadgeBackgroundColor({ tabId, color: "#C2410C" });
+  await chrome.action.setBadgeBackgroundColor({ color: "#C2410C", tabId });
   await chrome.action.setBadgeText({ tabId, text });
   await chrome.action.setTitle({ tabId, title });
-
   setTimeout(() => {
     chrome.action.setBadgeText({ tabId, text: "" }).catch(() => {});
     chrome.action.setTitle({ tabId, title: "导入 AGENTS.md" }).catch(() => {});
   }, 4000);
 }
 
-async function importAgents(tabId) {
-  let tab = null;
-
+async function showPageToast(tabId, message, kind = "error") {
   try {
+    await sendToContentScript(tabId, { kind, message, type: "SHOW_TOAST" });
+  } catch (_error) {
+    await showBadge(tabId, "!", message);
+  }
+}
+
+async function importProfiles({ profileId = null, tabId = null } = {}) {
+  let tab = null;
+  try {
+    await AgentProfileStore.initialize();
     tab = await getTargetTab(tabId);
-    if (!tab || !Number.isInteger(tab.id)) {
-      throw new ImportFailure("NO_ACTIVE_TAB", "没有找到当前活动标签页。");
-    }
-
-    const origin = getOrigin(tab.url);
-    if (!SUPPORTED_ORIGINS.has(origin)) {
-      throw new ImportFailure(
-        "UNSUPPORTED_SITE",
-        "当前网站暂不支持，仅可在 DeepSeek、豆包和千问中使用。"
-      );
-    }
-
-    const sources = await readEffectiveSources(origin);
-    const block = AgentInstructions.buildInstructionBlock(sources);
-    if (!block) {
-      throw new ImportFailure("EMPTY_FILES", "已保存的 AGENTS.md 内容为空。");
-    }
-
+    const origin = ensureSupportedTab(tab);
+    const profiles = await getProfilesForOrigin(origin, profileId);
     const response = await sendToContentScript(tab.id, {
-      type: "INJECT_AGENTS",
-      block
+      profiles,
+      type: "INJECT_PROFILES"
     });
-
-    if (!response || !response.ok) {
+    if (!response?.ok) {
       throw new ImportFailure(
         response?.code || "INJECTION_FAILED",
         response?.message || "未能写入聊天输入框。"
@@ -158,16 +147,17 @@ async function importAgents(tabId) {
 
     await chrome.storage.local.set({
       lastImport: {
-        origin,
         at: new Date().toISOString(),
-        files: sources.map((source) => source.name)
+        origin,
+        profiles: profiles.map((profile) => profile.id)
       }
     });
-
     return {
-      ok: true,
       code: "IMPORTED",
-      message: "AGENTS.md 已写入输入框，请检查后手动发送。"
+      message: profileId
+        ? "配置已写入输入框，请检查后手动发送。"
+        : `已写入 ${profiles.length} 条配置，请检查后手动发送。`,
+      ok: true
     };
   } catch (error) {
     const result = resultFromError(error);
@@ -180,17 +170,28 @@ async function importAgents(tabId) {
   }
 }
 
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-  if (message?.type !== "IMPORT_AGENTS") {
+chrome.runtime.onInstalled.addListener(() => {
+  AgentProfileStore.initialize().catch(() => {});
+});
+
+chrome.runtime.onStartup.addListener(() => {
+  AgentProfileStore.initialize().catch(() => {});
+});
+
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.type !== "IMPORT_PROFILE" && message?.type !== "IMPORT_ALL") {
     return false;
   }
 
-  importAgents(message.tabId).then(sendResponse);
+  importProfiles({
+    profileId: message.type === "IMPORT_PROFILE" ? message.profileId : null,
+    tabId: message.tabId ?? sender.tab?.id ?? null
+  }).then(sendResponse);
   return true;
 });
 
 chrome.commands.onCommand.addListener((command) => {
   if (command === "inject-agents") {
-    importAgents().catch(() => {});
+    importProfiles().catch(() => {});
   }
 });

@@ -6,6 +6,7 @@
   }
   globalThis.__chatWebAgentInstalled = true;
 
+  const SHORTCUT_INDEX_KEY = "profileShortcutIndex";
   const SITE_SELECTORS = {
     "https://chat.deepseek.com": [
       "textarea#chat-input",
@@ -28,7 +29,6 @@
       "[contenteditable='true'][data-slate-editor='true']"
     ]
   };
-
   const GENERIC_SELECTORS = [
     "textarea:not([disabled]):not([readonly])",
     "[contenteditable='true'][role='textbox']",
@@ -36,17 +36,16 @@
     "[contenteditable='true'][data-slate-editor='true']",
     "[contenteditable='true']"
   ];
+  let shortcutIndex = [];
 
   function isVisibleEditor(element) {
     if (!(element instanceof HTMLElement)) {
       return false;
     }
-
     const style = getComputedStyle(element);
     const rectangle = element.getBoundingClientRect();
     const disabled = element.matches(":disabled, [aria-disabled='true']");
     const readOnly = "readOnly" in element && element.readOnly;
-
     return !disabled
       && !readOnly
       && style.display !== "none"
@@ -57,8 +56,7 @@
 
   function findUniqueEditor(selectors) {
     for (const selector of selectors) {
-      const matches = Array.from(document.querySelectorAll(selector))
-        .filter(isVisibleEditor);
+      const matches = Array.from(document.querySelectorAll(selector)).filter(isVisibleEditor);
       if (matches.length === 1) {
         return matches[0];
       }
@@ -67,8 +65,8 @@
   }
 
   function findComposer() {
-    const siteEditor = findUniqueEditor(SITE_SELECTORS[location.origin] || []);
-    return siteEditor || findUniqueEditor(GENERIC_SELECTORS);
+    return findUniqueEditor(SITE_SELECTORS[location.origin] || [])
+      || findUniqueEditor(GENERIC_SELECTORS);
   }
 
   function getEditorText(editor) {
@@ -83,8 +81,8 @@
       editor.dispatchEvent(new InputEvent("input", {
         bubbles: true,
         composed: true,
-        inputType: "insertText",
-        data: null
+        data: null,
+        inputType: "insertText"
       }));
     } catch (_error) {
       editor.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
@@ -97,17 +95,14 @@
       ? HTMLTextAreaElement.prototype
       : HTMLInputElement.prototype;
     const setter = Object.getOwnPropertyDescriptor(prototype, "value")?.set;
-
     if (setter) {
       setter.call(editor, value);
     } else {
       editor.value = value;
     }
-
     dispatchEditorEvents(editor);
     editor.focus();
-    const endPosition = value.length;
-    editor.setSelectionRange(endPosition, endPosition);
+    editor.setSelectionRange(value.length, value.length);
     editor.scrollTop = editor.scrollHeight;
   }
 
@@ -122,7 +117,6 @@
 
   function setContentEditableValue(editor, value) {
     editor.focus();
-
     const selection = window.getSelection();
     const range = document.createRange();
     range.selectNodeContents(editor);
@@ -135,11 +129,9 @@
     } catch (_error) {
       inserted = false;
     }
-
     if (!inserted) {
       editor.replaceChildren(document.createTextNode(value));
     }
-
     dispatchEditorEvents(editor);
     placeCaretAtEnd(editor);
     editor.scrollTop = editor.scrollHeight;
@@ -155,17 +147,9 @@
 
   function showToast(message, kind = "info") {
     document.getElementById("chat-web-agent-toast")?.remove();
-
     const host = document.createElement("div");
     host.id = "chat-web-agent-toast";
-    host.style.cssText = [
-      "position:fixed",
-      "top:20px",
-      "left:50%",
-      "transform:translateX(-50%)",
-      "z-index:2147483647"
-    ].join(";");
-
+    host.style.cssText = "position:fixed;top:20px;left:50%;transform:translateX(-50%);z-index:2147483647";
     const shadow = host.attachShadow({ mode: "closed" });
     const style = document.createElement("style");
     style.textContent = `
@@ -173,7 +157,7 @@
         max-width: 520px;
         padding: 11px 16px;
         border: 1px solid rgba(15, 23, 42, 0.12);
-        border-radius: 10px;
+        border-radius: 8px;
         box-shadow: 0 10px 30px rgba(15, 23, 42, 0.2);
         color: #ffffff;
         font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
@@ -191,59 +175,98 @@
     setTimeout(() => host.remove(), 3500);
   }
 
-  function injectInstructions(block) {
+  function injectProfiles(profiles) {
     if (!globalThis.AgentInstructions) {
       return {
-        ok: false,
         code: "UTILITIES_UNAVAILABLE",
-        message: "扩展组件未正确加载，请刷新页面后重试。"
+        message: "扩展组件未正确加载，请刷新页面后重试。",
+        ok: false
       };
     }
-
     const composer = findComposer();
     if (!composer) {
       return {
-        ok: false,
         code: "COMPOSER_NOT_FOUND",
-        message: "没有找到唯一可用的聊天输入框，请刷新页面或打开一个对话后重试。"
+        message: "没有找到唯一可用的聊天输入框，请刷新页面或打开一个对话后重试。",
+        ok: false
       };
     }
 
     try {
-      const existingText = getEditorText(composer);
-      const mergedText = AgentInstructions.mergeInstructionBlock(existingText, block);
+      const mergedText = AgentInstructions.mergeProfileBlocks(getEditorText(composer), profiles);
       setEditorText(composer, mergedText);
-      showToast("AGENTS.md 已写入输入框，请检查后手动发送。", "success");
-      return {
-        ok: true,
-        code: "INJECTED",
-        message: "AGENTS.md 已写入输入框。"
-      };
+      showToast(`已写入 ${profiles.length} 条配置，请检查后手动发送。`, "success");
+      return { code: "INJECTED", message: "配置已写入输入框。", ok: true };
     } catch (_error) {
       return {
-        ok: false,
         code: "EDITOR_UPDATE_FAILED",
-        message: "找到了输入框，但网页编辑器拒绝写入，请刷新页面后重试。"
+        message: "找到了输入框，但网页编辑器拒绝写入，请刷新页面后重试。",
+        ok: false
       };
     }
   }
 
+  async function loadShortcutIndex() {
+    const result = await chrome.storage.local.get(SHORTCUT_INDEX_KEY);
+    shortcutIndex = Array.isArray(result[SHORTCUT_INDEX_KEY])
+      ? result[SHORTCUT_INDEX_KEY]
+      : [];
+  }
+
+  function handleShortcut(event) {
+    if (
+      event.defaultPrevented
+      || event.repeat
+      || event.isComposing
+      || !globalThis.AgentProfileModel
+    ) {
+      return;
+    }
+    const eventKey = AgentProfileModel.shortcutKey(
+      AgentProfileModel.shortcutFromEvent(event)
+    );
+    const match = shortcutIndex.find((entry) => (
+      AgentProfileModel.matchesOrigin(entry.sites, location.origin)
+      && AgentProfileModel.shortcutKey(entry.shortcut) === eventKey
+    ));
+    if (!match) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    chrome.runtime.sendMessage({
+      profileId: match.id,
+      type: "IMPORT_PROFILE"
+    }).catch(() => {
+      showToast("扩展后台未响应，请重新加载扩展后重试。", "error");
+    });
+  }
+
+  chrome.storage.onChanged.addListener((changes, areaName) => {
+    if (areaName === "local" && changes[SHORTCUT_INDEX_KEY]) {
+      shortcutIndex = Array.isArray(changes[SHORTCUT_INDEX_KEY].newValue)
+        ? changes[SHORTCUT_INDEX_KEY].newValue
+        : [];
+    }
+  });
+  document.addEventListener("keydown", handleShortcut, true);
+  loadShortcutIndex().catch(() => {});
+
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-    if (message?.type === "INJECT_AGENTS") {
-      const result = injectInstructions(message.block);
+    if (message?.type === "INJECT_PROFILES") {
+      const result = injectProfiles(message.profiles || []);
       if (!result.ok) {
         showToast(result.message, "error");
       }
       sendResponse(result);
       return false;
     }
-
     if (message?.type === "SHOW_TOAST") {
       showToast(message.message, message.kind || "info");
       sendResponse({ ok: true });
       return false;
     }
-
     return false;
   });
 })();

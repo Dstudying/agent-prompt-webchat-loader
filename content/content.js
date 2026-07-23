@@ -195,7 +195,8 @@
     try {
       const mergedText = AgentInstructions.mergeProfileBlocks(getEditorText(composer), profiles);
       setEditorText(composer, mergedText);
-      showToast(`已写入 ${profiles.length} 条配置，请检查后手动发送。`, "success");
+      const names = profiles.map((p) => p.name).join("、");
+      showToast(`已写入“${names}”，请检查后手动发送。`, "success");
       return { code: "INJECTED", message: "配置已写入输入框。", ok: true };
     } catch (_error) {
       return {

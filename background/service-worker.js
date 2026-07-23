@@ -64,9 +64,11 @@ async function resolveProfile(profile) {
   }
   return {
     content: refreshed.content,
+    endMarker: refreshed.endMarker,
     id: refreshed.id,
     name: refreshed.name,
-    placement: refreshed.placement
+    placement: refreshed.placement,
+    startMarker: refreshed.startMarker
   };
 }
 

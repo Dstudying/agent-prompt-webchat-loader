@@ -22,6 +22,7 @@ const elements = {
   deleteButton: document.getElementById("delete-button"),
   emptyEditor: document.getElementById("empty-editor"),
   emptyList: document.getElementById("empty-list"),
+  endMarker: document.getElementById("end-marker-input"),
   enabled: document.getElementById("enabled-input"),
   exportButton: document.getElementById("export-button"),
   fallbackFileInput: document.getElementById("fallback-file-input"),
@@ -40,6 +41,7 @@ const elements = {
   siteAll: document.getElementById("site-all"),
   siteOptions: Array.from(document.querySelectorAll(".site-option")),
   sourceBadge: document.getElementById("source-badge"),
+  startMarker: document.getElementById("start-marker-input"),
   textSection: document.getElementById("text-section")
 };
 
@@ -138,9 +140,13 @@ function renderEditor() {
   elements.textSection.hidden = profile.sourceType !== "text";
   elements.fileSection.hidden = profile.sourceType !== "file";
   elements.content.value = profile.content;
+  elements.endMarker.value = profile.endMarker
+    || AgentProfileModel.DEFAULT_PROFILE_END_MARKER;
   elements.fileName.textContent = profile.fileName || "AGENTS.md";
   elements.fileStatus.textContent = sourceStatus(profile);
   elements.siteAll.checked = profile.sites.includes("*");
+  elements.startMarker.value = profile.startMarker
+    || AgentProfileModel.DEFAULT_PROFILE_START_MARKER;
   elements.siteOptions.forEach((input) => {
     input.checked = profile.sites.includes(input.value);
     input.disabled = elements.siteAll.checked;
@@ -155,17 +161,28 @@ function renderEditor() {
 }
 
 function selectProfile(id) {
+  cacheCurrentDraft();
   state.selectedId = id;
   renderList();
   renderEditor();
 }
 
+function cacheCurrentDraft() {
+  const profile = selectedProfile();
+  if (!profile || elements.form.hidden) {
+    return;
+  }
+  const draft = readFormProfile({ updateTimestamp: false });
+  state.profiles = state.profiles.map((entry) => entry.id === draft.id ? draft : entry);
+}
+
 function createProfile(sourceType, values = {}) {
-  const now = new Date().toISOString();
+  const now = AgentProfileModel.formatLocalDateTime();
   return {
     content: values.content || "",
     createdAt: now,
     enabled: true,
+    endMarker: values.endMarker || AgentProfileModel.DEFAULT_PROFILE_END_MARKER,
     fileName: values.fileName || "",
     handle: values.handle,
     id: crypto.randomUUID(),
@@ -175,6 +192,7 @@ function createProfile(sourceType, values = {}) {
     shortcut: null,
     sites: ["*"],
     sourceType,
+    startMarker: values.startMarker || AgentProfileModel.DEFAULT_PROFILE_START_MARKER,
     updatedAt: now
   };
 }
@@ -256,18 +274,24 @@ function getSelectedSites() {
   return elements.siteOptions.filter((input) => input.checked).map((input) => input.value);
 }
 
-function readFormProfile() {
+function readFormProfile({ updateTimestamp = true } = {}) {
   const profile = selectedProfile();
   const placement = elements.form.querySelector("input[name='placement']:checked")?.value;
   return {
     ...profile,
     content: profile.sourceType === "text" ? elements.content.value : profile.content,
     enabled: elements.enabled.checked,
+    endMarker: elements.endMarker.value.trim()
+      || AgentProfileModel.DEFAULT_PROFILE_END_MARKER,
     name: elements.name.value.trim(),
     placement,
     shortcut: state.draftShortcut,
     sites: getSelectedSites(),
-    updatedAt: new Date().toISOString()
+    startMarker: elements.startMarker.value.trim()
+      || AgentProfileModel.DEFAULT_PROFILE_START_MARKER,
+    updatedAt: updateTimestamp
+      ? AgentProfileModel.formatLocalDateTime()
+      : profile.updatedAt
   };
 }
 
@@ -349,7 +373,7 @@ async function applyReboundFile(profile, file, handle) {
     content: await file.text(),
     fileName: file.name,
     handle,
-    updatedAt: new Date().toISOString()
+    updatedAt: AgentProfileModel.formatLocalDateTime()
   };
   await AgentProfileStore.putProfile(updated);
   state.profiles = state.profiles.map((entry) => entry.id === updated.id ? updated : entry);
@@ -415,7 +439,9 @@ function exportProfiles() {
     const blob = new Blob([`${JSON.stringify(backup, null, 2)}\n`], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
-    const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const timestamp = AgentProfileModel.formatLocalDateTime()
+      .replace(" ", "_")
+      .replace(/:/g, "-");
     link.href = url;
     link.download = `agent-prompt-config-${timestamp}.json`;
     link.click();

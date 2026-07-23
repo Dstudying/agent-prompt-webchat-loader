@@ -75,4 +75,19 @@ assert.equal(
   `第一段\n\n第二段\n\n${buildProfileBlock({ ...firstProfile, content: "新规范。", placement: "append" })}`
 );
 
+const customMarkerProfile = {
+  ...firstProfile,
+  endMarker: "<<<自定义结束>>>",
+  startMarker: "<<<自定义开始>>>"
+};
+const customMarkerBlock = buildProfileBlock(customMarkerProfile);
+assert.ok(customMarkerBlock.startsWith("<<<自定义开始>>>"));
+assert.ok(customMarkerBlock.endsWith("<<<自定义结束>>>"));
+assert.equal(
+  mergeProfileBlocks(`${customMarkerBlock}\n\n${draft}`, [
+    { ...customMarkerProfile, content: "更新后的规范。" }
+  ]),
+  `${buildProfileBlock({ ...customMarkerProfile, content: "更新后的规范。" })}\n\n${draft}`
+);
+
 console.log("instruction-block tests passed");

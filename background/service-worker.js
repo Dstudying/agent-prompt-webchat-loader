@@ -229,22 +229,21 @@ async function showPageToast(tabId, message, kind = "error") {
 async function executeUserCodeOnPage(tabId, code, profiles) {
   let oldText = "";
   try {
-    const readCaller = new Function("return function(){" + [
-      '"use strict";',
-      code,
-      'if (typeof platformRead !== "function") return { error: "自定义代码未定义 platformRead 函数。" };',
-      "try {",
-      '  return { error: null, text: String(platformRead() ?? "") };',
-      "} catch(e) {",
-      '  return { error: "platformRead 执行失败：" + e.message };',
-      "}"
-    ].join("\n") + "}");
+    const readFunc = function(userCode) {
+      eval(userCode);
+      if (typeof platformRead !== "function") return { error: "自定义代码未定义 platformRead 函数。" };
+      try {
+        return { error: null, text: String(platformRead() ?? "") };
+      } catch (e) {
+        return { error: "platformRead 执行失败：" + e.message };
+      }
+    };
 
     const [readResult] = await chrome.scripting.executeScript({
       target: { tabId },
       world: "MAIN",
-      args: [],
-      func: readCaller()
+      args: [code],
+      func: readFunc
     });
     const result = readResult?.result;
     if (result?.error) throw new ImportFailure("CODE_EXEC_ERROR", result.error);
@@ -257,23 +256,22 @@ async function executeUserCodeOnPage(tabId, code, profiles) {
   const mergedText = AgentInstructions.mergeProfileBlocks(oldText, profiles);
 
   try {
-    const writeCaller = new Function("return function(text){" + [
-      '"use strict";',
-      code,
-      'if (typeof platformWrite !== "function") return { error: "自定义代码未定义 platformWrite 函数。" };',
-      "try {",
-      "  platformWrite(text);",
-      '  return { ok: true };',
-      "} catch(e) {",
-      '  return { error: "platformWrite 执行失败：" + e.message };',
-      "}"
-    ].join("\n") + "}");
+    const writeFunc = function(userCode, text) {
+      eval(userCode);
+      if (typeof platformWrite !== "function") return { error: "自定义代码未定义 platformWrite 函数。" };
+      try {
+        platformWrite(text);
+        return { ok: true };
+      } catch (e) {
+        return { error: "platformWrite 执行失败：" + e.message };
+      }
+    };
 
     const [writeResult] = await chrome.scripting.executeScript({
       target: { tabId },
       world: "MAIN",
-      args: [mergedText],
-      func: writeCaller()
+      args: [code, mergedText],
+      func: writeFunc
     });
     const result = writeResult?.result;
     if (result?.error) throw new ImportFailure("CODE_EXEC_ERROR", result.error);
@@ -412,23 +410,22 @@ async function testSiteCode(message) {
         "没有找到已打开的目标网站标签页，请先打开该网站。"
       );
     }
-    const readCaller = new Function("return function(){" + [
-      '"use strict";',
-      message.code,
-      'if (typeof platformRead !== "function") return { ok: false, message: "自定义代码未定义 platformRead 函数。" };',
-      "try {",
-      "  var __text = platformRead();",
-      '  return { ok: true, text: String(__text ?? "") };',
-      "} catch(e) {",
-      '  return { ok: false, message: "platformRead 执行失败：" + e.message };',
-      "}"
-    ].join("\n") + "}");
+    const testFunc = function(userCode) {
+      eval(userCode);
+      if (typeof platformRead !== "function") return { ok: false, message: "自定义代码未定义 platformRead 函数。" };
+      try {
+        var __text = platformRead();
+        return { ok: true, text: String(__text ?? "") };
+      } catch (e) {
+        return { ok: false, message: "platformRead 执行失败：" + e.message };
+      }
+    };
 
     const [execResult] = await chrome.scripting.executeScript({
       target: { tabId: tab.id },
       world: "MAIN",
-      args: [],
-      func: readCaller()
+      args: [message.code],
+      func: testFunc
     });
     return execResult?.result || { ok: false, message: "代码执行无返回值。" };
   } catch (error) {

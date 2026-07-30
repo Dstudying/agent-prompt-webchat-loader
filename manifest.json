@@ -1,11 +1,12 @@
 {
   "manifest_version": 3,
   "name": "AGENTS.md 对话导入器",
-  "version": "2.0.0",
+  "version": "3.0.0",
   "description": "管理多条 AGENTS.md 或文本规范，并按配置插入网页聊天输入框。",
   "permissions": [
     "storage",
     "activeTab",
+    "clipboardWrite",
     "scripting"
   ],
   "icons": {
@@ -17,7 +18,12 @@
   "host_permissions": [
     "https://chat.deepseek.com/*",
     "https://www.doubao.com/*",
-    "https://www.qianwen.com/*"
+    "https://www.qianwen.com/*",
+    "https://chatgpt.com/*"
+  ],
+  "optional_host_permissions": [
+    "http://*/*",
+    "https://*/*"
   ],
   "background": {
     "service_worker": "background/service-worker.js"
@@ -42,20 +48,5 @@
       },
       "description": "将 AGENTS.md 导入当前聊天输入框"
     }
-  },
-  "content_scripts": [
-    {
-      "matches": [
-        "https://chat.deepseek.com/*",
-        "https://www.doubao.com/*",
-        "https://www.qianwen.com/*"
-      ],
-      "js": [
-        "lib/profile-model.js",
-        "lib/instruction-block.js",
-        "content/content.js"
-      ],
-      "run_at": "document_idle"
-    }
-  ]
+  }
 }

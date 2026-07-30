@@ -1,14 +1,9 @@
 "use strict";
 
-const SUPPORTED_SITES = {
-  "https://chat.deepseek.com": "DeepSeek",
-  "https://www.doubao.com": "豆包",
-  "https://www.qianwen.com": "千问"
-};
-
 const state = {
   origin: null,
   profiles: [],
+  site: null,
   supported: false,
   tabId: null
 };
@@ -138,19 +133,30 @@ async function initialize() {
   } catch (_error) {
     state.origin = null;
   }
-  state.supported = Boolean(SUPPORTED_SITES[state.origin]);
+  await AgentProfileStore.initialize();
+  const [profiles, sites] = await Promise.all([
+    AgentProfileStore.getAllProfiles(),
+    AgentProfileStore.getAllSites()
+  ]);
+  state.site = sites.find((site) => site.origin === state.origin) || null;
+  const permitted = state.site
+    ? await chrome.permissions.contains({
+      origins: [AgentSiteModel.originToMatchPattern(state.site.origin)]
+    })
+    : false;
+  state.supported = Boolean(state.site && permitted);
   if (state.supported) {
-    elements.siteStatus.textContent = `当前网站：${SUPPORTED_SITES[state.origin]}`;
+    elements.siteStatus.textContent = `当前网站：${state.site.name}`;
+  } else if (state.site) {
+    elements.siteStatus.textContent = `${state.site.name} 已配置但未授权`;
+    elements.siteStatus.classList.add("unsupported");
   } else {
-    elements.siteStatus.textContent = "当前网站不受支持";
+    elements.siteStatus.textContent = "当前网站尚未添加";
     elements.siteStatus.classList.add("unsupported");
   }
-
-  await AgentProfileStore.initialize();
-  const profiles = await AgentProfileStore.getAllProfiles();
   state.profiles = state.supported
     ? profiles.filter((profile) => (
-      profile.enabled && AgentProfileModel.matchesOrigin(profile.sites, state.origin)
+      profile.enabled && AgentProfileModel.matchesSite(profile.sites, state.site.id)
     ))
     : [];
   renderProfiles();

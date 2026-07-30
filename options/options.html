@@ -16,13 +16,17 @@
         </div>
       </div>
       <div class="toolbar">
+        <div class="view-tabs" role="tablist" aria-label="设置视图">
+          <button id="profiles-tab" class="view-tab active" type="button" role="tab" aria-selected="true">规范配置</button>
+          <button id="sites-tab" class="view-tab" type="button" role="tab" aria-selected="false">网站管理</button>
+        </div>
         <button id="export-button" class="button export-json" type="button">导出 JSON</button>
         <button id="import-button" class="button import-json" type="button">导入 JSON</button>
         <input id="import-input" type="file" accept="application/json,.json" hidden>
       </div>
     </header>
 
-    <main class="workspace">
+    <main id="profiles-view" class="workspace">
       <aside class="profile-sidebar" aria-label="配置列表">
         <div class="sidebar-heading">
           <div>
@@ -98,11 +102,8 @@
 
           <fieldset class="field-group">
             <legend>适用网站</legend>
-            <div class="check-grid">
+            <div id="site-options" class="check-grid">
               <label><input id="site-all" type="checkbox"> 全部支持的网站</label>
-              <label><input class="site-option" type="checkbox" value="https://chat.deepseek.com"> DeepSeek</label>
-              <label><input class="site-option" type="checkbox" value="https://www.doubao.com"> 豆包</label>
-              <label><input class="site-option" type="checkbox" value="https://www.qianwen.com"> 千问</label>
             </div>
           </fieldset>
 
@@ -135,6 +136,93 @@
       </section>
     </main>
 
+    <main id="sites-view" class="site-workspace" hidden>
+      <section class="site-manager" aria-labelledby="site-manager-title">
+        <div class="site-manager-heading">
+          <div>
+            <h2 id="site-manager-title">已添加网站</h2>
+            <p>这些网站会出现在规范配置的适用范围中。</p>
+          </div>
+          <button id="add-site" class="button primary" type="button">添加网站</button>
+        </div>
+        <div class="site-layout">
+          <div>
+            <div id="site-list" class="managed-site-list"></div>
+            <p id="empty-sites" class="empty-list" hidden>尚未添加网站。</p>
+          </div>
+          <form id="site-form" class="site-editor" hidden>
+            <div class="editor-heading">
+              <div>
+                <span id="site-editor-badge" class="source-badge">网站</span>
+                <h2 id="site-editor-title">编辑网站</h2>
+              </div>
+              <span id="site-permission-status" class="permission-status">读取权限中…</span>
+            </div>
+            <label class="field">
+              <span>网站名称</span>
+              <input id="site-name-input" type="text" maxlength="120" autocomplete="off" required>
+            </label>
+            <label class="field">
+              <span>网站地址</span>
+              <input id="site-origin-input" type="url" placeholder="https://example.com" autocomplete="off" required>
+              <p class="field-hint">可以粘贴完整页面地址，保存时只保留协议和域名。</p>
+            </label>
+            <fieldset class="field-group">
+              <legend>输入模式</legend>
+              <div class="segmented" id="site-mode-segmented">
+                <label><input type="radio" name="site-editor-mode" value="selector" checked> CSS 选择器</label>
+                <label><input type="radio" name="site-editor-mode" value="code"> JS 代码</label>
+              </div>
+            </fieldset>
+            <label class="field" id="site-selectors-field">
+              <span>输入框 CSS 选择器</span>
+              <textarea id="site-selectors-input" class="selector-input" rows="8" spellcheck="false" placeholder="每行一个选择器，按顺序尝试"></textarea>
+            </label>
+            <label class="field" id="site-code-field" hidden>
+              <span>自定义 JS 代码</span>
+              <textarea id="site-code-input" class="code-input" rows="8" spellcheck="false" placeholder="function platformRead() {\n  // 返回当前输入框文本（字符串）\n}\nfunction platformWrite(text) {\n  // 将 text 写入输入框\n}"></textarea>
+              <p class="field-hint">定义 platformRead() 返回当前输入框文本（字符串），platformWrite(text) 将文本写入输入框。设置此代码后，选择器和自动识别将被忽略。</p>
+            </label>
+            <label class="toggle-row" id="site-auto-detect-row">
+              <input id="site-auto-detect-input" type="checkbox">
+              <span>
+                <strong>自动识别输入框</strong>
+                <small>自定义选择器全部失败后，尝试通用 textarea 和 contenteditable 规则。</small>
+              </span>
+            </label>
+            <div id="site-feedback" class="feedback" role="status" aria-live="polite"></div>
+            <div class="site-form-actions">
+              <div class="site-secondary-actions">
+                <button id="test-site" class="button secondary" type="button">测试选择器</button>
+                <button id="copy-site" class="button secondary" type="button">复制网站</button>
+                <button id="authorize-site" class="button secondary" type="button">授权网站</button>
+              </div>
+              <div class="site-primary-actions">
+                <button id="delete-site" class="button danger" type="button">删除网站</button>
+                <button class="button primary" type="submit">保存网站</button>
+              </div>
+            </div>
+          </form>
+          <div id="empty-site-editor" class="empty-editor compact">
+            <h2>选择一个网站</h2>
+            <p>可更新网址、选择器和自动识别设置。</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="template-section" aria-labelledby="template-title">
+        <div class="site-manager-heading">
+          <div>
+            <h2 id="template-title">参考模板</h2>
+            <p>模板始终保留，更新扩展不会覆盖已添加网站的修改。</p>
+          </div>
+        </div>
+        <div id="template-feedback" class="feedback" role="status" aria-live="polite"></div>
+        <div id="template-list" class="template-list"></div>
+      </section>
+    </main>
+
+    <script src="../lib/site-model.js"></script>
     <script src="../lib/profile-model.js"></script>
     <script src="../lib/profile-store.js"></script>
     <script src="options.js"></script>

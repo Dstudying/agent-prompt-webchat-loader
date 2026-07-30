@@ -1,15 +1,13 @@
 "use strict";
 
 importScripts(
+  "../lib/site-model.js",
   "../lib/profile-model.js",
   "../lib/profile-store.js",
   "../lib/instruction-block.js"
 );
 
-const SUPPORTED_ORIGINS = new Set(AgentProfileModel.SUPPORTED_ORIGINS);
-const SUPPORTED_URL_PATTERNS = AgentProfileModel.SUPPORTED_ORIGINS.map(
-  (origin) => `${origin}/*`
-);
+const DYNAMIC_SCRIPT_ID = "configured-model-sites";
 
 class ImportFailure extends Error {
   constructor(code, message) {
@@ -22,7 +20,7 @@ class ImportFailure extends Error {
 function resultFromError(error) {
   return {
     code: error.code || "UNKNOWN_ERROR",
-    message: error.message || "导入失败，请稍后重试。",
+    message: error.message || "操作失败，请稍后重试。",
     ok: false
   };
 }
@@ -35,6 +33,52 @@ function getOrigin(url) {
   }
 }
 
+async function hasSitePermission(site) {
+  return chrome.permissions.contains({
+    origins: [AgentSiteModel.originToMatchPattern(site.origin)]
+  });
+}
+
+async function getAuthorizedSites() {
+  const sites = await AgentProfileStore.getAllSites();
+  const permissionStates = await Promise.all(sites.map(hasSitePermission));
+  return sites.filter((_site, index) => permissionStates[index]);
+}
+
+async function syncRegisteredContentScripts() {
+  const sites = await getAuthorizedSites();
+  const matches = [...new Set(sites.map((site) => (
+    AgentSiteModel.originToMatchPattern(site.origin)
+  )))];
+  const registered = await chrome.scripting.getRegisteredContentScripts({
+    ids: [DYNAMIC_SCRIPT_ID]
+  });
+  if (matches.length === 0) {
+    if (registered.length > 0) {
+      await chrome.scripting.unregisterContentScripts({ ids: [DYNAMIC_SCRIPT_ID] });
+    }
+    return;
+  }
+  const definition = {
+    allFrames: false,
+    id: DYNAMIC_SCRIPT_ID,
+    js: [
+      "lib/site-model.js",
+      "lib/profile-model.js",
+      "lib/instruction-block.js",
+      "content/content.js"
+    ],
+    matches,
+    persistAcrossSessions: true,
+    runAt: "document_idle"
+  };
+  if (registered.length > 0) {
+    await chrome.scripting.updateContentScripts([definition]);
+  } else {
+    await chrome.scripting.registerContentScripts([definition]);
+  }
+}
+
 async function getTargetTab(tabId) {
   if (Number.isInteger(tabId)) {
     return chrome.tabs.get(tabId);
@@ -43,18 +87,28 @@ async function getTargetTab(tabId) {
   return tabs[0] || null;
 }
 
-function ensureSupportedTab(tab) {
+async function ensureSupportedTab(tab) {
   if (!tab || !Number.isInteger(tab.id)) {
     throw new ImportFailure("NO_ACTIVE_TAB", "没有找到当前活动标签页。");
   }
   const origin = getOrigin(tab.url);
-  if (!SUPPORTED_ORIGINS.has(origin)) {
+  if (!origin) {
+    throw new ImportFailure("SITE_NOT_CONFIGURED", "当前页面不是可配置的网页。");
+  }
+  const site = await AgentProfileStore.getSiteByOrigin(origin);
+  if (!site) {
     throw new ImportFailure(
-      "UNSUPPORTED_SITE",
-      "当前网站暂不支持，仅可在 DeepSeek、豆包和千问中使用。"
+      "SITE_NOT_CONFIGURED",
+      "当前网站尚未添加，请先在扩展设置页的网站管理中配置。"
     );
   }
-  return origin;
+  if (!await hasSitePermission(site)) {
+    throw new ImportFailure(
+      "SITE_PERMISSION_REQUIRED",
+      `“${site.name}”尚未获得网站访问权限，请在设置页中授权。`
+    );
+  }
+  return site;
 }
 
 async function resolveProfile(profile) {
@@ -75,14 +129,13 @@ async function resolveProfile(profile) {
   };
 }
 
-async function getProfilesForOrigin(origin, profileId = null) {
+async function getProfilesForSite(siteId, profileId = null) {
   const profiles = await AgentProfileStore.getAllProfiles();
   const matches = profiles.filter((profile) => (
     profile.enabled
-    && AgentProfileModel.matchesOrigin(profile.sites, origin)
+    && AgentProfileModel.matchesSite(profile.sites, siteId)
     && (!profileId || profile.id === profileId)
   ));
-
   if (profileId && matches.length === 0) {
     throw new ImportFailure(
       "PROFILE_UNAVAILABLE",
@@ -101,6 +154,7 @@ async function getProfilesForOrigin(origin, profileId = null) {
 async function installContentScript(tabId) {
   await chrome.scripting.executeScript({
     files: [
+      "lib/site-model.js",
       "lib/profile-model.js",
       "lib/instruction-block.js",
       "content/content.js"
@@ -129,7 +183,6 @@ async function reloadTabShortcutIndex(tabId) {
   } catch (_error) {
     // 页面没有可用内容脚本时，在下方重新安装。
   }
-
   await installContentScript(tabId);
   const response = await chrome.tabs.sendMessage(tabId, {
     type: "RELOAD_SHORTCUT_INDEX"
@@ -140,7 +193,14 @@ async function reloadTabShortcutIndex(tabId) {
 }
 
 async function refreshShortcutContexts() {
-  const tabs = await chrome.tabs.query({ url: SUPPORTED_URL_PATTERNS });
+  const sites = await getAuthorizedSites();
+  const patterns = [...new Set(sites.map((site) => (
+    AgentSiteModel.originToMatchPattern(site.origin)
+  )))];
+  if (patterns.length === 0) {
+    return;
+  }
+  const tabs = await chrome.tabs.query({ url: patterns });
   await Promise.allSettled(
     tabs
       .filter((tab) => Number.isInteger(tab.id))
@@ -166,55 +226,243 @@ async function showPageToast(tabId, message, kind = "error") {
   }
 }
 
+async function executeUserCodeOnPage(tabId, code, profiles) {
+  let oldText = "";
+  try {
+    const readCaller = new Function("return function(){" + [
+      '"use strict";',
+      code,
+      'if (typeof platformRead !== "function") return { error: "自定义代码未定义 platformRead 函数。" };',
+      "try {",
+      '  return { error: null, text: String(platformRead() ?? "") };',
+      "} catch(e) {",
+      '  return { error: "platformRead 执行失败：" + e.message };',
+      "}"
+    ].join("\n") + "}");
+
+    const [readResult] = await chrome.scripting.executeScript({
+      target: { tabId },
+      world: "MAIN",
+      args: [],
+      func: readCaller()
+    });
+    const result = readResult?.result;
+    if (result?.error) throw new ImportFailure("CODE_EXEC_ERROR", result.error);
+    oldText = result?.text || "";
+  } catch (error) {
+    if (error instanceof ImportFailure) throw error;
+    throw new ImportFailure("CODE_INJECTION_FAILED", `代码注入页面失败：${error.message}`);
+  }
+
+  const mergedText = AgentInstructions.mergeProfileBlocks(oldText, profiles);
+
+  try {
+    const writeCaller = new Function("return function(text){" + [
+      '"use strict";',
+      code,
+      'if (typeof platformWrite !== "function") return { error: "自定义代码未定义 platformWrite 函数。" };',
+      "try {",
+      "  platformWrite(text);",
+      '  return { ok: true };',
+      "} catch(e) {",
+      '  return { error: "platformWrite 执行失败：" + e.message };',
+      "}"
+    ].join("\n") + "}");
+
+    const [writeResult] = await chrome.scripting.executeScript({
+      target: { tabId },
+      world: "MAIN",
+      args: [mergedText],
+      func: writeCaller()
+    });
+    const result = writeResult?.result;
+    if (result?.error) throw new ImportFailure("CODE_EXEC_ERROR", result.error);
+  } catch (error) {
+    if (error instanceof ImportFailure) throw error;
+    throw new ImportFailure("CODE_INJECTION_FAILED", `代码写入页面失败：${error.message}`);
+  }
+}
+
 async function importProfiles({ profileId = null, tabId = null } = {}) {
   let tab = null;
   try {
     await AgentProfileStore.initialize();
     tab = await getTargetTab(tabId);
-    const origin = ensureSupportedTab(tab);
-    const profiles = await getProfilesForOrigin(origin, profileId);
+    const site = await ensureSupportedTab(tab);
+    const profiles = await getProfilesForSite(site.id, profileId);
+
+    if (site.code) {
+      await executeUserCodeOnPage(tab.id, site.code, profiles);
+      const names = profiles.map((p) => p.name).join("、");
+      await showPageToast(tab.id, `已通过自定义代码写入“${names}”，请检查后手动发送。`, "success");
+      await chrome.storage.local.set({
+        lastImport: {
+          at: new Date().toISOString(),
+          origin: site.origin,
+          profiles: profiles.map((p) => p.id)
+        }
+      });
+      return {
+        code: "IMPORTED",
+        message: `已写入“${names}”，请检查后手动发送。`,
+        ok: true
+      };
+    }
+
     const response = await sendToContentScript(tab.id, {
       profiles,
+      site: {
+        autoDetect: site.autoDetect,
+        editorSelectors: site.editorSelectors
+      },
       type: "INJECT_PROFILES"
     });
     if (!response?.ok) {
       throw new ImportFailure(
         response?.code || "INJECTION_FAILED",
-        response?.message || "未能写入聊天输入框。"
+        response?.message || "写入输入框失败。"
       );
     }
-
     await chrome.storage.local.set({
       lastImport: {
         at: new Date().toISOString(),
-        origin,
+        origin: site.origin,
         profiles: profiles.map((profile) => profile.id)
       }
     });
     return {
       code: "IMPORTED",
-      message: profileId
-        ? "配置已写入输入框，请检查后手动发送。"
+      message: profiles.length === 1
+        ? `已写入“${profiles[0].name}”，请检查后手动发送。`
         : `已写入 ${profiles.length} 条配置，请检查后手动发送。`,
       ok: true
     };
   } catch (error) {
     const result = resultFromError(error);
-    if (tab && Number.isInteger(tab.id) && SUPPORTED_ORIGINS.has(getOrigin(tab.url))) {
-      await showPageToast(tab.id, result.message);
-    } else if (tab && Number.isInteger(tab.id)) {
-      await showBadge(tab.id, "!", result.message);
+    if (tab && Number.isInteger(tab.id)) {
+      try {
+        const origin = getOrigin(tab.url);
+        const site = origin ? await AgentProfileStore.getSiteByOrigin(origin) : null;
+        if (site && await hasSitePermission(site)) {
+          await showPageToast(tab.id, result.message);
+        } else {
+          await showBadge(tab.id, "!", result.message);
+        }
+      } catch (_error) {
+        await showBadge(tab.id, "!", result.message);
+      }
     }
     return result;
   }
 }
 
+async function testSiteSelectors(message) {
+  try {
+    const origin = AgentSiteModel.normalizeOrigin(message.origin);
+    const pattern = AgentSiteModel.originToMatchPattern(origin);
+    if (!await chrome.permissions.contains({ origins: [pattern] })) {
+      throw new ImportFailure(
+        "SITE_PERMISSION_REQUIRED",
+        "测试前需要先授予该网站的访问权限。"
+      );
+    }
+    const tabs = await chrome.tabs.query({ url: [pattern] });
+    const candidates = tabs.filter((tab) => (
+      Number.isInteger(tab.id) && getOrigin(tab.url) === origin
+    ));
+    candidates.sort((first, second) => (second.lastAccessed || 0) - (first.lastAccessed || 0));
+    const tab = candidates[0];
+    if (!tab) {
+      throw new ImportFailure(
+        "SITE_TAB_NOT_FOUND",
+        "没有找到已打开的目标网站标签页，请先打开该网站。"
+      );
+    }
+    return await sendToContentScript(tab.id, {
+      site: {
+        autoDetect: Boolean(message.autoDetect),
+        editorSelectors: AgentSiteModel.normalizeEditorSelectors(message.editorSelectors)
+      },
+      type: "TEST_SITE_SELECTORS"
+    });
+  } catch (error) {
+    return resultFromError(error);
+  }
+}
+
+async function testSiteCode(message) {
+  try {
+    const origin = AgentSiteModel.normalizeOrigin(message.origin);
+    const pattern = AgentSiteModel.originToMatchPattern(origin);
+    if (!await chrome.permissions.contains({ origins: [pattern] })) {
+      throw new ImportFailure(
+        "SITE_PERMISSION_REQUIRED",
+        "测试前需要先授予该网站的访问权限。"
+      );
+    }
+    const tabs = await chrome.tabs.query({ url: [pattern] });
+    const candidates = tabs.filter((tab) => (
+      Number.isInteger(tab.id) && getOrigin(tab.url) === origin
+    ));
+    candidates.sort((first, second) => (second.lastAccessed || 0) - (first.lastAccessed || 0));
+    const tab = candidates[0];
+    if (!tab) {
+      throw new ImportFailure(
+        "SITE_TAB_NOT_FOUND",
+        "没有找到已打开的目标网站标签页，请先打开该网站。"
+      );
+    }
+    const readCaller = new Function("return function(){" + [
+      '"use strict";',
+      message.code,
+      'if (typeof platformRead !== "function") return { ok: false, message: "自定义代码未定义 platformRead 函数。" };',
+      "try {",
+      "  var __text = platformRead();",
+      '  return { ok: true, text: String(__text ?? "") };',
+      "} catch(e) {",
+      '  return { ok: false, message: "platformRead 执行失败：" + e.message };',
+      "}"
+    ].join("\n") + "}");
+
+    const [execResult] = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      world: "MAIN",
+      args: [],
+      func: readCaller()
+    });
+    return execResult?.result || { ok: false, message: "代码执行无返回值。" };
+  } catch (error) {
+    return resultFromError(error);
+  }
+}
+
+async function handleSiteRegistryChanged() {
+  await AgentProfileStore.syncShortcutIndex();
+  await syncRegisteredContentScripts();
+  await refreshShortcutContexts();
+  return { ok: true };
+}
+
+async function initializeRuntime() {
+  await AgentProfileStore.initialize();
+  await syncRegisteredContentScripts();
+  await refreshShortcutContexts();
+}
+
 chrome.runtime.onInstalled.addListener(() => {
-  AgentProfileStore.initialize().catch(() => {});
+  initializeRuntime().catch(() => {});
 });
 
 chrome.runtime.onStartup.addListener(() => {
-  AgentProfileStore.initialize().catch(() => {});
+  initializeRuntime().catch(() => {});
+});
+
+chrome.permissions.onAdded.addListener(() => {
+  handleSiteRegistryChanged().catch(() => {});
+});
+
+chrome.permissions.onRemoved.addListener(() => {
+  handleSiteRegistryChanged().catch(() => {});
 });
 
 chrome.storage.onChanged.addListener((changes, areaName) => {
@@ -227,15 +475,28 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message?.type !== "IMPORT_PROFILE" && message?.type !== "IMPORT_ALL") {
-    return false;
+  if (message?.type === "IMPORT_PROFILE" || message?.type === "IMPORT_ALL") {
+    importProfiles({
+      profileId: message.type === "IMPORT_PROFILE" ? message.profileId : null,
+      tabId: message.tabId ?? sender.tab?.id ?? null
+    }).then(sendResponse);
+    return true;
   }
-
-  importProfiles({
-    profileId: message.type === "IMPORT_PROFILE" ? message.profileId : null,
-    tabId: message.tabId ?? sender.tab?.id ?? null
-  }).then(sendResponse);
-  return true;
+  if (message?.type === "SITE_REGISTRY_CHANGED") {
+    handleSiteRegistryChanged()
+      .then(sendResponse)
+      .catch((error) => sendResponse(resultFromError(error)));
+    return true;
+  }
+  if (message?.type === "TEST_SITE_SELECTORS") {
+    testSiteSelectors(message).then(sendResponse);
+    return true;
+  }
+  if (message?.type === "TEST_SITE_CODE") {
+    testSiteCode(message).then(sendResponse);
+    return true;
+  }
+  return false;
 });
 
 chrome.commands.onCommand.addListener((command) => {

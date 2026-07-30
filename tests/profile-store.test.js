@@ -31,9 +31,13 @@ const profile = {
   shortcut,
   sites: ["*"]
 };
+const sites = [{
+  id: "10000000-0000-4000-8000-000000000001",
+  origin: "https://chat.deepseek.com"
+}];
 
 async function runTests() {
-  await AgentProfileStore.syncShortcutIndex([profile]);
+  await AgentProfileStore.syncShortcutIndex([profile], sites);
   const firstWrite = storageWrites.at(-1);
   const firstRevision = firstWrite[AgentProfileStore.SHORTCUT_INDEX_REVISION_KEY];
 
@@ -43,10 +47,10 @@ async function runTests() {
     id: profile.id,
     revision: firstRevision,
     shortcut,
-    sites: ["*"]
+    sites: ["https://chat.deepseek.com"]
   }]);
 
-  await AgentProfileStore.syncShortcutIndex([profile]);
+  await AgentProfileStore.syncShortcutIndex([profile], sites);
   const secondWrite = storageWrites.at(-1);
   const secondRevision = secondWrite[AgentProfileStore.SHORTCUT_INDEX_REVISION_KEY];
 
@@ -56,13 +60,21 @@ async function runTests() {
     secondRevision
   );
 
-  await AgentProfileStore.syncShortcutIndex([{ ...profile, enabled: false }]);
+  await AgentProfileStore.syncShortcutIndex([{ ...profile, enabled: false }], sites);
   const disabledWrite = storageWrites.at(-1);
   assert.deepEqual(disabledWrite[AgentProfileStore.SHORTCUT_INDEX_KEY], []);
   assert.equal(
     storedValues[AgentProfileStore.SHORTCUT_INDEX_REVISION_KEY],
     disabledWrite[AgentProfileStore.SHORTCUT_INDEX_REVISION_KEY]
   );
+
+  await AgentProfileStore.syncShortcutIndex([{
+    ...profile,
+    sites: [sites[0].id]
+  }], sites);
+  assert.deepEqual(storageWrites.at(-1)[AgentProfileStore.SHORTCUT_INDEX_KEY][0].sites, [
+    "https://chat.deepseek.com"
+  ]);
 }
 
 runTests()

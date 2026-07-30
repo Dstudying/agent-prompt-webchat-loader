@@ -1,6 +1,7 @@
 "use strict";
 
 const assert = require("node:assert/strict");
+const { DEFAULT_SITE_TEMPLATES } = require("../lib/site-model.js");
 const {
   DEFAULT_PROFILE_END_MARKER,
   DEFAULT_PROFILE_START_MARKER,
@@ -11,6 +12,12 @@ const {
   validateBackup,
   validateProfiles
 } = require("../lib/profile-model.js");
+
+const sites = DEFAULT_SITE_TEMPLATES.map((site) => ({
+  ...site,
+  createdAt: "2026-07-22 15:20:00",
+  updatedAt: "2026-07-22 15:30:00"
+}));
 
 function createProfile(overrides = {}) {
   return {
@@ -40,34 +47,34 @@ const profile = createProfile();
 assert.equal(formatShortcut(profile.shortcut), "Ctrl+Shift+1");
 assert.equal(shortcutKey(profile.shortcut), "C:-:S:-:Digit1");
 
-const backup = createBackup([profile]);
+const backup = createBackup([profile], sites);
 assert.equal(backup.format, "agent-prompt-webchat-loader");
-assert.equal(backup.schemaVersion, 2);
+assert.equal(backup.schemaVersion, 3);
 assert.match(backup.exportedAt, /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/);
 assert.equal(backup.profiles[0].startMarker, DEFAULT_PROFILE_START_MARKER);
 assert.equal(backup.profiles[0].endMarker, DEFAULT_PROFILE_END_MARKER);
-assert.equal(validateBackup(JSON.parse(JSON.stringify(backup))).length, 1);
+assert.equal(validateBackup(JSON.parse(JSON.stringify(backup))).profiles.length, 1);
 const editedFileBackup = createBackup([createProfile({
   content: "插件内修改内容。",
   contentEdited: true,
   fileName: "AGENTS.md",
   sourceContent: "来源文件内容。",
   sourceType: "file"
-})]);
+})], sites);
 assert.equal(
-  validateBackup(JSON.parse(JSON.stringify(editedFileBackup)))[0].contentEdited,
+  validateBackup(JSON.parse(JSON.stringify(editedFileBackup))).profiles[0].contentEdited,
   true
 );
 assert.equal(
-  validateBackup(JSON.parse(JSON.stringify(editedFileBackup)))[0].sourceContent,
+  validateBackup(JSON.parse(JSON.stringify(editedFileBackup))).profiles[0].sourceContent,
   "来源文件内容。"
 );
 const legacyFileBackup = JSON.parse(JSON.stringify(editedFileBackup));
 delete legacyFileBackup.profiles[0].contentEdited;
 delete legacyFileBackup.profiles[0].sourceContent;
-assert.equal(validateBackup(legacyFileBackup)[0].contentEdited, false);
+assert.equal(validateBackup(legacyFileBackup).profiles[0].contentEdited, false);
 assert.equal(
-  validateBackup(legacyFileBackup)[0].sourceContent,
+  validateBackup(legacyFileBackup).profiles[0].sourceContent,
   "插件内修改内容。"
 );
 assert.equal(validateProfiles([createProfile({ contentEdited: true })])[0].contentEdited, false);
@@ -98,20 +105,22 @@ assert.match(normalizedLegacyTime.updatedAt, /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{
 const customMarkerBackup = createBackup([createProfile({
   endMarker: "<<<自定义结束>>>",
   startMarker: "<<<自定义开始>>>"
-})]);
-const [customMarkerProfile] = validateBackup(JSON.parse(JSON.stringify(customMarkerBackup)));
+})], sites);
+const [customMarkerProfile] = validateBackup(
+  JSON.parse(JSON.stringify(customMarkerBackup))
+).profiles;
 assert.equal(customMarkerProfile.startMarker, "<<<自定义开始>>>");
 assert.equal(customMarkerProfile.endMarker, "<<<自定义结束>>>");
 
 const disjointShortcut = createProfile({
   id: "22222222-2222-4222-8222-222222222222",
   name: "豆包规范",
-  sites: ["https://www.doubao.com"]
+  sites: [DEFAULT_SITE_TEMPLATES[1].id]
 });
 const deepSeekProfile = createProfile({
   id: "33333333-3333-4333-8333-333333333333",
   name: "DeepSeek 规范",
-  sites: ["https://chat.deepseek.com"]
+  sites: [DEFAULT_SITE_TEMPLATES[0].id]
 });
 assert.equal(validateProfiles([disjointShortcut, deepSeekProfile]).length, 2);
 
@@ -122,6 +131,21 @@ assert.throws(
 assert.throws(
   () => validateBackup({ ...backup, schemaVersion: 1 }),
   /不支持配置版本/
+);
+const versionTwoBackup = JSON.parse(JSON.stringify(backup));
+versionTwoBackup.schemaVersion = 2;
+delete versionTwoBackup.sites;
+versionTwoBackup.profiles[0].sites = ["https://chat.deepseek.com"];
+const migratedVersionTwo = validateBackup(versionTwoBackup);
+assert.equal(migratedVersionTwo.profiles[0].sites[0], DEFAULT_SITE_TEMPLATES[0].id);
+assert.equal(migratedVersionTwo.sites.length, 3);
+assert.throws(
+  () => validateBackup(backup, (selector) => {
+    if (selector.includes("prompt-textarea")) {
+      throw new Error("选择器无效");
+    }
+  }),
+  /选择器无效/
 );
 const missingMarkersBackup = JSON.parse(JSON.stringify(backup));
 delete missingMarkersBackup.profiles[0].startMarker;

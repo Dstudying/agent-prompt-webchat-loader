@@ -2,11 +2,14 @@
 
 一个无需构建的 Chrome/Edge Manifest V3 扩展，用于管理多条 `AGENTS.md` 或文本规范，并把指定内容写入网页大模型的聊天输入框。
 
-当前支持：
+首次安装会添加以下默认网站配置：
 
 - `https://chat.deepseek.com/*`
 - `https://www.doubao.com/*`
 - `https://www.qianwen.com/*`
+- `https://chatgpt.com/*`
+
+默认网站可以编辑或删除。也可以在设置页添加其他 HTTP/HTTPS 大模型网站，并配置聊天输入框选择器。
 
 扩展只负责写入输入框，**不会自动点击发送**。
 
@@ -31,11 +34,13 @@
 - 录制页面快捷键，例如 `Ctrl+Shift+1`。
 - 导入或导出完整 JSON 配置。
 
+“网站管理”支持添加、编辑、复制和删除网站，配置多条有优先级的 CSS 选择器，开启通用输入框自动识别，并在已打开的目标网站中测试和高亮匹配元素。DeepSeek、豆包、千问和 ChatGPT 的只读参考模板会永久保留，删除默认网站后仍可从模板重新添加。
+
 文件配置会优先读取磁盘最新正文，并保留一份未编辑的来源快照。文件被移动、删除、权限失效或配置来自 JSON 时，“重新读取”会恢复来源快照；也可以在设置页关联本地文件以重新读取磁盘最新内容。
 
 ## 插入配置
 
-打开 DeepSeek、豆包或千问后，点击扩展图标：
+打开任意已添加且已授权的网站后，点击扩展图标：
 
 1. 弹窗只显示已启用且适用于当前网站的配置。
 2. 点击某条配置右侧的“插入”可以单独写入。
@@ -63,7 +68,7 @@
 ```json
 {
   "format": "agent-prompt-webchat-loader",
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "exportedAt": "2026-07-22 15:30:45",
   "profiles": [
     {
@@ -82,15 +87,26 @@
       "startMarker": "<<<请你严格遵循给定的规范:START>>>",
       "updatedAt": "2026-07-22 15:30:00"
     }
+  ],
+  "sites": [
+    {
+      "autoDetect": true,
+      "createdAt": "2026-07-22 15:20:00",
+      "editorSelectors": ["#prompt-textarea[contenteditable='true']"],
+      "id": "10000000-0000-4000-8000-000000000004",
+      "name": "ChatGPT",
+      "origin": "https://chatgpt.com",
+      "updatedAt": "2026-07-22 15:30:00"
+    }
   ]
 }
 ```
 
-备份包含配置名称、正文缓存、来源快照、文件名、顺序、启用状态、网站范围、插入位置、动态快捷键以及开头和结尾标记。浏览器文件句柄、最后导入记录及任何聊天内容不会导出。
+备份包含规范配置以及实际使用的网站名称、origin、选择器和自动识别状态。只读参考模板不重复写入备份。浏览器文件句柄、网站授权状态、最后导入记录及任何聊天内容不会导出。
 
-`exportedAt`、`createdAt` 和 `updatedAt` 均使用浏览器本地时间，格式固定为 `YYYY-MM-DD HH:mm:ss`，字符串不携带时区偏移量。备份格式当前为 `schemaVersion: 2`，不兼容旧版 JSON。
+`exportedAt`、`createdAt` 和 `updatedAt` 均使用浏览器本地时间，格式固定为 `YYYY-MM-DD HH:mm:ss`，字符串不携带时区偏移量。备份格式当前为 `schemaVersion: 3`，并兼容导入 `schemaVersion: 2` 的旧版 JSON。
 
-导入时会先完整校验版本、配置 ID、标记、时间、站点、插入位置和快捷键冲突。标记字段必须存在、为非空单行文本且首尾不能相同；时间必须是有效的本地日期和时间。校验通过并确认后才会整体替换现有配置；解析或校验失败不会修改已有数据。
+导入时会先完整校验版本、配置及网站 ID、标记、时间、网站引用、选择器、插入位置和快捷键冲突。校验通过并确认后才会整体替换现有配置；解析或校验失败不会修改已有数据。导入的自定义网站需要在网站管理中主动授权。
 
 ## 隐私说明
 
@@ -117,15 +133,9 @@ manifest.json Manifest V3 配置
 
 ## 站点适配
 
-添加网站时，需要同步更新以下位置：
+普通网站可以直接在设置页添加，无需修改扩展代码。选择器应优先使用稳定的 `data-*` 属性、`role="textbox"`、`contenteditable="true"` 或稳定 `placeholder`，并保证只匹配一个可见编辑器。
 
-- `manifest.json` 中的 `host_permissions` 和 `content_scripts.matches`。
-- `lib/profile-model.js` 中的支持站点列表。
-- `background/service-worker.js` 的运行时 origin 白名单。
-- `content/content.js` 的网站编辑器选择器。
-- 设置页和弹窗中的网站中文名称。
-
-选择器应优先使用稳定的 `data-*` 属性、`role="textbox"`、`contenteditable="true"` 或稳定 `placeholder`，并保证在目标页面只匹配一个可见编辑器。当前实现不能直接访问跨域 iframe 或封闭 Shadow DOM 内的编辑器。
+维护参考模板时，只修改 `lib/site-model.js` 中的集中模板数据。模板更新不会覆盖用户已保存的网站配置。当前实现不能直接访问跨域 iframe 或封闭 Shadow DOM 内的编辑器。
 
 ## 开发检查
 
@@ -133,8 +143,9 @@ manifest.json Manifest V3 配置
 
 ```powershell
 node tests/instruction-block.test.js
+node tests/site-model.test.js
 node tests/profile-model.test.js
 node tests/profile-store.test.js
 ```
 
-浏览器改动需要在 DeepSeek、豆包和千问中人工检查：文件刷新与缓存回退、文本配置、单条和全部插入、首尾位置、重复替换、页面快捷键、原生 `Ctrl+I` 以及 JSON 导入导出。每次检查都应确认扩展不会自动发送消息。
+浏览器改动需要在 DeepSeek、豆包、千问、ChatGPT 和至少一个自定义网站中人工检查：权限申请、选择器测试、文件刷新与缓存回退、文本配置、单条和全部插入、首尾位置、重复替换、页面快捷键、原生 `Ctrl+I` 以及 JSON 导入导出。每次检查都应确认扩展不会自动发送消息。

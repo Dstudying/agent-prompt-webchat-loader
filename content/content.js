@@ -12,28 +12,6 @@
 
   const SHORTCUT_INDEX_KEY = "profileShortcutIndex";
   const SHORTCUT_INDEX_REVISION_KEY = "profileShortcutIndexRevision";
-  const SITE_SELECTORS = {
-    "https://chat.deepseek.com": [
-      "textarea#chat-input",
-      "textarea[placeholder*='DeepSeek']",
-      "textarea[placeholder*='发送消息']",
-      "[contenteditable='true'][data-lexical-editor='true']",
-      "[contenteditable='true'][role='textbox']"
-    ],
-    "https://www.doubao.com": [
-      "[data-testid*='chat_input'] [contenteditable='true']",
-      "[data-testid*='chat-input'] [contenteditable='true']",
-      "[contenteditable='true'][data-slate-editor='true']",
-      "[contenteditable='true'][role='textbox']",
-      "textarea[placeholder*='发送']"
-    ],
-    "https://www.qianwen.com": [
-      "[data-chat-input-body='true'] [data-slate-editor='true']",
-      "[data-testid='chat-input-content-measure'] [contenteditable='true']",
-      "[data-chat-input-shell='true'] [contenteditable='true'][role='textbox']",
-      "[contenteditable='true'][data-slate-editor='true']"
-    ]
-  };
   const GENERIC_SELECTORS = [
     "textarea:not([disabled]):not([readonly])",
     "[contenteditable='true'][role='textbox']",
@@ -62,17 +40,25 @@
 
   function findUniqueEditor(selectors) {
     for (const selector of selectors) {
-      const matches = Array.from(document.querySelectorAll(selector)).filter(isVisibleEditor);
+      let matches;
+      try {
+        matches = Array.from(document.querySelectorAll(selector)).filter(isVisibleEditor);
+      } catch (_error) {
+        continue;
+      }
       if (matches.length === 1) {
-        return matches[0];
+        return { editor: matches[0], matchCount: 1, selector };
       }
     }
     return null;
   }
 
-  function findComposer() {
-    return findUniqueEditor(SITE_SELECTORS[location.origin] || [])
-      || findUniqueEditor(GENERIC_SELECTORS);
+  function findComposer(site = {}) {
+    const configured = findUniqueEditor(site.editorSelectors || []);
+    if (configured || site.autoDetect === false) {
+      return configured;
+    }
+    return findUniqueEditor(GENERIC_SELECTORS);
   }
 
   function getEditorText(editor) {
@@ -181,7 +167,7 @@
     setTimeout(() => host.remove(), 3500);
   }
 
-  function injectProfiles(profiles) {
+  function injectProfiles(profiles, site) {
     if (!globalThis.AgentInstructions) {
       return {
         code: "UTILITIES_UNAVAILABLE",
@@ -189,8 +175,9 @@
         ok: false
       };
     }
-    const composer = findComposer();
-    if (!composer) {
+
+    const match = findComposer(site);
+    if (!match) {
       return {
         code: "COMPOSER_NOT_FOUND",
         message: "没有找到唯一可用的聊天输入框，请刷新页面或打开一个对话后重试。",
@@ -199,8 +186,8 @@
     }
 
     try {
-      const mergedText = AgentInstructions.mergeProfileBlocks(getEditorText(composer), profiles);
-      setEditorText(composer, mergedText);
+      const mergedText = AgentInstructions.mergeProfileBlocks(getEditorText(match.editor), profiles);
+      setEditorText(match.editor, mergedText);
       const names = profiles.map((p) => p.name).join("、");
       showToast(`已写入“${names}”，请检查后手动发送。`, "success");
       return { code: "INJECTED", message: "配置已写入输入框。", ok: true };
@@ -267,6 +254,74 @@
     }
   }
 
+  function highlightEditor(editor) {
+    const previousOutline = editor.style.outline;
+    const previousOutlineOffset = editor.style.outlineOffset;
+    editor.style.outline = "3px solid #2563eb";
+    editor.style.outlineOffset = "3px";
+    editor.scrollIntoView({ behavior: "smooth", block: "center" });
+    setTimeout(() => {
+      editor.style.outline = previousOutline;
+      editor.style.outlineOffset = previousOutlineOffset;
+    }, 2200);
+  }
+
+  function testSiteSelectors(site) {
+    const selectors = Array.isArray(site?.editorSelectors) ? site.editorSelectors : [];
+    const results = [];
+    for (const selector of selectors) {
+      try {
+        const allMatches = Array.from(document.querySelectorAll(selector));
+        const visibleMatches = allMatches.filter(isVisibleEditor);
+        results.push({
+          matchCount: allMatches.length,
+          selector,
+          visibleCount: visibleMatches.length
+        });
+        if (visibleMatches.length === 1) {
+          highlightEditor(visibleMatches[0]);
+          return {
+            element: visibleMatches[0].tagName.toLowerCase(),
+            matchCount: allMatches.length,
+            ok: true,
+            results,
+            selector,
+            usedAutoDetect: false,
+            visible: true
+          };
+        }
+      } catch (_error) {
+        return {
+          code: "INVALID_SITE_SELECTOR",
+          message: `选择器语法无效：${selector}`,
+          ok: false,
+          results
+        };
+      }
+    }
+    if (site?.autoDetect !== false) {
+      const automatic = findUniqueEditor(GENERIC_SELECTORS);
+      if (automatic) {
+        highlightEditor(automatic.editor);
+        return {
+          element: automatic.editor.tagName.toLowerCase(),
+          matchCount: automatic.matchCount,
+          ok: true,
+          results,
+          selector: automatic.selector,
+          usedAutoDetect: true,
+          visible: true
+        };
+      }
+    }
+    return {
+      code: "COMPOSER_NOT_FOUND",
+      message: "没有找到唯一可见且可编辑的输入框。",
+      ok: false,
+      results
+    };
+  }
+
   function handleWindowFocus() {
     loadShortcutIndex().catch(() => {});
   }
@@ -279,7 +334,7 @@
 
   function handleRuntimeMessage(message, _sender, sendResponse) {
     if (message?.type === "INJECT_PROFILES") {
-      const result = injectProfiles(message.profiles || []);
+      const result = injectProfiles(message.profiles || [], message.site || {});
       if (!result.ok) {
         showToast(result.message, "error");
       }
@@ -289,6 +344,10 @@
     if (message?.type === "SHOW_TOAST") {
       showToast(message.message, message.kind || "info");
       sendResponse({ ok: true });
+      return false;
+    }
+    if (message?.type === "TEST_SITE_SELECTORS") {
+      sendResponse(testSiteSelectors(message.site || {}));
       return false;
     }
     if (message?.type === "RELOAD_SHORTCUT_INDEX") {

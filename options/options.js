@@ -1,17 +1,15 @@
 "use strict";
 
-const SITE_LABELS = {
-  "https://chat.deepseek.com": "DeepSeek",
-  "https://www.doubao.com": "豆包",
-  "https://www.qianwen.com": "千问"
-};
-
 const state = {
   commandShortcuts: new Set(),
   draftShortcut: null,
   profiles: [],
   recording: false,
-  selectedId: null
+  selectedId: null,
+  selectedSiteId: null,
+  siteDraft: null,
+  sites: [],
+  view: "profiles"
 };
 
 const elements = {
@@ -42,11 +40,42 @@ const elements = {
   reloadFile: document.getElementById("reload-file"),
   shortcutRecorder: document.getElementById("shortcut-recorder"),
   siteAll: document.getElementById("site-all"),
-  siteOptions: Array.from(document.querySelectorAll(".site-option")),
+  siteOptionsContainer: document.getElementById("site-options"),
   sourceBadge: document.getElementById("source-badge"),
   startMarker: document.getElementById("start-marker-input"),
-  textSection: document.getElementById("text-section")
+  textSection: document.getElementById("text-section"),
+  addSite: document.getElementById("add-site"),
+  authorizeSite: document.getElementById("authorize-site"),
+  copySite: document.getElementById("copy-site"),
+  deleteSite: document.getElementById("delete-site"),
+  emptySiteEditor: document.getElementById("empty-site-editor"),
+  emptySites: document.getElementById("empty-sites"),
+  profilesTab: document.getElementById("profiles-tab"),
+  profilesView: document.getElementById("profiles-view"),
+  siteAutoDetect: document.getElementById("site-auto-detect-input"),
+  siteAutoDetectRow: document.getElementById("site-auto-detect-row"),
+  siteEditorBadge: document.getElementById("site-editor-badge"),
+  siteEditorTitle: document.getElementById("site-editor-title"),
+  siteFeedback: document.getElementById("site-feedback"),
+  siteForm: document.getElementById("site-form"),
+  siteList: document.getElementById("site-list"),
+  siteName: document.getElementById("site-name-input"),
+  siteOrigin: document.getElementById("site-origin-input"),
+  sitePermissionStatus: document.getElementById("site-permission-status"),
+  siteCodeInput: document.getElementById("site-code-input"),
+  siteCodeField: document.getElementById("site-code-field"),
+  siteSelectors: document.getElementById("site-selectors-input"),
+  siteSelectorsField: document.getElementById("site-selectors-field"),
+  sitesTab: document.getElementById("sites-tab"),
+  sitesView: document.getElementById("sites-view"),
+  templateList: document.getElementById("template-list"),
+  templateFeedback: document.getElementById("template-feedback"),
+  testSite: document.getElementById("test-site")
 };
+
+function siteOptionInputs() {
+  return Array.from(elements.siteOptionsContainer.querySelectorAll(".site-option"));
+}
 
 function selectedProfile() {
   return state.profiles.find((profile) => profile.id === state.selectedId) || null;
@@ -66,7 +95,27 @@ function siteSummary(sites) {
   if (sites.includes("*")) {
     return "全部网站";
   }
-  return sites.map((site) => SITE_LABELS[site]).filter(Boolean).join("、");
+  const namesById = new Map(state.sites.map((site) => [site.id, site.name]));
+  return sites.map((siteId) => namesById.get(siteId)).filter(Boolean).join("、");
+}
+
+function renderProfileSiteOptions() {
+  const selected = selectedProfile()?.sites || [];
+  elements.siteOptionsContainer.querySelectorAll(".site-option-label").forEach((label) => {
+    label.remove();
+  });
+  state.sites.forEach((site) => {
+    const label = document.createElement("label");
+    label.className = "site-option-label";
+    const input = document.createElement("input");
+    input.className = "site-option";
+    input.type = "checkbox";
+    input.value = site.id;
+    input.checked = selected.includes(site.id);
+    input.disabled = elements.siteAll.checked;
+    label.append(input, document.createTextNode(` ${site.name}`));
+    elements.siteOptionsContainer.append(label);
+  });
 }
 
 function sourceStatus(profile) {
@@ -166,10 +215,7 @@ function renderEditor() {
   elements.siteAll.checked = profile.sites.includes("*");
   elements.startMarker.value = profile.startMarker
     || AgentProfileModel.DEFAULT_PROFILE_START_MARKER;
-  elements.siteOptions.forEach((input) => {
-    input.checked = profile.sites.includes(input.value);
-    input.disabled = elements.siteAll.checked;
-  });
+  renderProfileSiteOptions();
   const placement = elements.form.querySelector(`input[name="placement"][value="${profile.placement}"]`);
   if (placement) {
     placement.checked = true;
@@ -295,7 +341,7 @@ function getSelectedSites() {
   if (elements.siteAll.checked) {
     return ["*"];
   }
-  return elements.siteOptions.filter((input) => input.checked).map((input) => input.value);
+  return siteOptionInputs().filter((input) => input.checked).map((input) => input.value);
 }
 
 function readFormProfile({ updateTimestamp = true } = {}) {
@@ -334,7 +380,10 @@ async function saveCurrentProfile(event) {
       throw new Error("规范正文不能为空。");
     }
     const nextProfiles = state.profiles.map((profile) => profile.id === updated.id ? updated : profile);
-    const normalized = AgentProfileModel.validateProfiles(nextProfiles);
+    const normalized = AgentProfileModel.validateProfiles(
+      nextProfiles,
+      state.sites.map((site) => site.id)
+    );
     if (updated.shortcut && state.commandShortcuts.has(
       AgentProfileModel.formatShortcut(updated.shortcut).toLowerCase()
     )) {
@@ -529,7 +578,7 @@ function recordShortcut(event) {
 
 function exportProfiles() {
   try {
-    const backup = AgentProfileModel.createBackup(state.profiles);
+    const backup = AgentProfileModel.createBackup(state.profiles, state.sites);
     const blob = new Blob([`${JSON.stringify(backup, null, 2)}\n`], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
@@ -553,7 +602,8 @@ async function importProfiles() {
   }
   try {
     const backup = JSON.parse(await file.text());
-    const profiles = AgentProfileModel.validateBackup(backup);
+    const imported = AgentProfileModel.validateBackup(backup, validateSelectorSyntax);
+    const { profiles, sites } = imported;
     const importedCount = profiles.length;
     const overwrittenCount = state.profiles.length;
     if (!confirm(
@@ -561,11 +611,19 @@ async function importProfiles() {
     )) {
       return;
     }
-    await AgentProfileStore.replaceProfiles(profiles);
+    const previousSites = [...state.sites];
+    await AgentProfileStore.replaceConfiguration(profiles, sites);
     state.profiles = profiles;
+    state.sites = sites;
     state.selectedId = profiles[0]?.id || null;
+    state.selectedSiteId = sites[0]?.id || null;
     renderList();
     renderEditor();
+    renderSiteList();
+    renderSiteEditor();
+    renderTemplates();
+    await removeUnusedSitePermissions(previousSites, sites);
+    await notifySiteRegistryChanged();
     showFeedback(
       `导入完成：共导入 ${importedCount} 条配置，覆盖 ${overwrittenCount} 条原有配置。`,
       "success"
@@ -575,19 +633,402 @@ async function importProfiles() {
   }
 }
 
+function showSiteFeedback(message, kind = "info") {
+  elements.siteFeedback.textContent = message;
+  elements.siteFeedback.className = `feedback visible ${kind}`;
+}
+
+function clearSiteFeedback() {
+  elements.siteFeedback.textContent = "";
+  elements.siteFeedback.className = "feedback";
+}
+
+function selectedSite() {
+  if (state.siteDraft) {
+    return state.siteDraft;
+  }
+  return state.sites.find((site) => site.id === state.selectedSiteId) || null;
+}
+
+function switchView(view) {
+  state.view = view;
+  const showProfiles = view === "profiles";
+  elements.profilesView.hidden = !showProfiles;
+  elements.sitesView.hidden = showProfiles;
+  elements.profilesTab.classList.toggle("active", showProfiles);
+  elements.sitesTab.classList.toggle("active", !showProfiles);
+  elements.profilesTab.setAttribute("aria-selected", String(showProfiles));
+  elements.sitesTab.setAttribute("aria-selected", String(!showProfiles));
+}
+
+async function siteHasPermission(site) {
+  return chrome.permissions.contains({
+    origins: [AgentSiteModel.originToMatchPattern(site.origin)]
+  });
+}
+
+async function updateSitePermissionStatus(site) {
+  if (!site || selectedSite()?.id !== site.id) {
+    return;
+  }
+  try {
+    const permitted = await siteHasPermission(site);
+    if (selectedSite()?.id !== site.id) {
+      return;
+    }
+    elements.sitePermissionStatus.textContent = permitted ? "已授权" : "未授权";
+    elements.sitePermissionStatus.classList.toggle("missing", !permitted);
+    elements.authorizeSite.hidden = permitted;
+  } catch (_error) {
+    elements.sitePermissionStatus.textContent = "权限状态未知";
+    elements.sitePermissionStatus.classList.add("missing");
+    elements.authorizeSite.hidden = false;
+  }
+}
+
+function renderSiteList() {
+  elements.siteList.replaceChildren();
+  elements.emptySites.hidden = state.sites.length > 0;
+  state.sites.forEach((site) => {
+    const item = document.createElement("div");
+    item.className = `managed-site-item${site.id === state.selectedSiteId && !state.siteDraft ? " selected" : ""}`;
+    const select = document.createElement("button");
+    select.className = "managed-site-select";
+    select.type = "button";
+    const name = document.createElement("strong");
+    name.textContent = site.name;
+    const origin = document.createElement("span");
+    origin.textContent = site.origin;
+    select.append(name, origin);
+    select.addEventListener("click", () => {
+      state.siteDraft = null;
+      state.selectedSiteId = site.id;
+      renderSiteList();
+      renderSiteEditor();
+    });
+    item.append(select);
+    elements.siteList.append(item);
+  });
+}
+
+function setSiteEditorMode(mode) {
+  const isCode = mode === "code";
+  elements.siteSelectorsField.hidden = isCode;
+  elements.siteCodeField.hidden = !isCode;
+  elements.siteAutoDetectRow.hidden = isCode;
+  const radios = document.querySelectorAll("input[name='site-editor-mode']");
+  radios.forEach((radio) => {
+    radio.checked = radio.value === mode;
+  });
+}
+
+function renderSiteEditor() {
+  const site = selectedSite();
+  elements.siteForm.hidden = !site;
+  elements.emptySiteEditor.hidden = Boolean(site);
+  if (!site) {
+    return;
+  }
+  clearSiteFeedback();
+  const isDraft = Boolean(state.siteDraft);
+  elements.siteEditorBadge.textContent = isDraft ? "新网站" : "网站";
+  elements.siteEditorTitle.textContent = isDraft ? "添加网站" : "编辑网站";
+  elements.siteName.value = site.name;
+  elements.siteOrigin.value = site.origin;
+  elements.siteSelectors.value = (site.editorSelectors || []).join("\n");
+  elements.siteCodeInput.value = site.code || "";
+  elements.siteAutoDetect.checked = site.autoDetect;
+  const mode = (site.code && site.code.trim()) ? "code" : "selector";
+  setSiteEditorMode(mode);
+  elements.testSite.textContent = mode === "code" ? "测试代码" : "测试选择器";
+  elements.deleteSite.hidden = isDraft;
+  elements.copySite.hidden = isDraft;
+  elements.sitePermissionStatus.textContent = isDraft ? "保存时授权" : "读取权限中…";
+  elements.sitePermissionStatus.classList.toggle("missing", isDraft);
+  elements.authorizeSite.hidden = isDraft;
+  if (!isDraft) {
+    updateSitePermissionStatus(site);
+  }
+}
+
+function validateSelectorSyntax(selector, siteName) {
+  try {
+    document.querySelector(selector);
+  } catch (_error) {
+    throw new Error(`${siteName} 的选择器语法无效：${selector}`);
+  }
+}
+
+function getSiteEditorMode() {
+  const radio = document.querySelector("input[name='site-editor-mode']:checked");
+  return radio ? radio.value : "selector";
+}
+
+function readSiteForm() {
+  const current = selectedSite();
+  const now = AgentProfileModel.formatLocalDateTime();
+  const mode = getSiteEditorMode();
+  return AgentSiteModel.normalizeSite({
+    autoDetect: mode === "selector" ? elements.siteAutoDetect.checked : false,
+    code: mode === "code" ? elements.siteCodeInput.value : "",
+    createdAt: current?.createdAt || now,
+    editorSelectors: mode === "selector" ? elements.siteSelectors.value : [],
+    id: current?.id || crypto.randomUUID(),
+    name: elements.siteName.value,
+    origin: elements.siteOrigin.value,
+    updatedAt: now
+  }, 0, mode === "selector" ? validateSelectorSyntax : null);
+}
+
+async function requestSitePermission(site) {
+  const pattern = AgentSiteModel.originToMatchPattern(site.origin);
+  return chrome.permissions.request({ origins: [pattern] });
+}
+
+async function removeUnusedSitePermissions(previousSites, remainingSites) {
+  const remainingPatterns = new Set(remainingSites.map((site) => (
+    AgentSiteModel.originToMatchPattern(site.origin)
+  )));
+  const removedPatterns = [...new Set(previousSites.map((site) => (
+    AgentSiteModel.originToMatchPattern(site.origin)
+  )))].filter((pattern) => !remainingPatterns.has(pattern));
+  await Promise.allSettled(removedPatterns.map((pattern) => (
+    chrome.permissions.remove({ origins: [pattern] })
+  )));
+}
+
+async function notifySiteRegistryChanged() {
+  try {
+    await chrome.runtime.sendMessage({ type: "SITE_REGISTRY_CHANGED" });
+  } catch (_error) {
+    // 后台重新加载期间，下次启动会自动同步动态内容脚本。
+  }
+}
+
+function ensureUniqueSite(site) {
+  const conflict = state.sites.find((entry) => (
+    entry.origin === site.origin && entry.id !== site.id
+  ));
+  if (conflict) {
+    throw new Error(`网站地址已被“${conflict.name}”使用。`);
+  }
+}
+
+async function saveSite(event) {
+  event.preventDefault();
+  clearSiteFeedback();
+  try {
+    const previous = state.siteDraft
+      ? null
+      : state.sites.find((site) => site.id === state.selectedSiteId) || null;
+    const site = readSiteForm();
+    ensureUniqueSite(site);
+    if (!await requestSitePermission(site)) {
+      throw new Error("未获得网站访问权限，网站配置尚未保存。");
+    }
+    await AgentProfileStore.putSite(site);
+    state.sites = state.sites.filter((entry) => entry.id !== site.id);
+    state.sites.push(site);
+    state.siteDraft = null;
+    state.selectedSiteId = site.id;
+    if (previous && previous.origin !== site.origin) {
+      await removeUnusedSitePermissions([previous], state.sites);
+    }
+    renderSiteList();
+    renderSiteEditor();
+    renderTemplates();
+    renderList();
+    renderEditor();
+    await notifySiteRegistryChanged();
+    showSiteFeedback("网站配置已保存。", "success");
+  } catch (error) {
+    showSiteFeedback(error.message || "保存网站失败，请重试。", "error");
+  }
+}
+
+function createSiteDraft(values = {}) {
+  const now = AgentProfileModel.formatLocalDateTime();
+  state.siteDraft = {
+    autoDetect: values.autoDetect ?? true,
+    code: values.code || "",
+    createdAt: now,
+    editorSelectors: [...(values.editorSelectors || [])],
+    id: crypto.randomUUID(),
+    name: values.name || "新网站",
+    origin: values.origin || "",
+    updatedAt: now
+  };
+  state.selectedSiteId = null;
+  renderSiteList();
+  renderSiteEditor();
+  elements.siteName.select();
+}
+
+async function authorizeCurrentSite() {
+  const site = selectedSite();
+  if (!site || state.siteDraft) {
+    return;
+  }
+  try {
+    if (!await requestSitePermission(site)) {
+      throw new Error("你拒绝了网站访问权限。");
+    }
+    await notifySiteRegistryChanged();
+    await updateSitePermissionStatus(site);
+    showSiteFeedback("网站已授权。", "success");
+  } catch (error) {
+    showSiteFeedback(error.message || "授权失败，请重试。", "error");
+  }
+}
+
+async function deleteCurrentSite() {
+  const site = selectedSite();
+  if (!site || state.siteDraft) {
+    return;
+  }
+  const references = state.profiles.filter((profile) => profile.sites.includes(site.id));
+  if (references.length > 0) {
+    showSiteFeedback(
+      `该网站仍被以下配置引用：${references.map((profile) => profile.name).join("、")}。请先修改这些配置。`,
+      "error"
+    );
+    return;
+  }
+  if (!confirm(`确定删除网站“${site.name}”吗？参考模板仍会保留。`)) {
+    return;
+  }
+  await AgentProfileStore.deleteSite(site.id);
+  state.sites = state.sites.filter((entry) => entry.id !== site.id);
+  state.selectedSiteId = state.sites[0]?.id || null;
+  await removeUnusedSitePermissions([site], state.sites);
+  renderSiteList();
+  renderSiteEditor();
+  renderTemplates();
+  renderList();
+  renderEditor();
+  await notifySiteRegistryChanged();
+}
+
+async function testCurrentSite() {
+  clearSiteFeedback();
+  try {
+    const site = readSiteForm();
+    if (!await requestSitePermission(site)) {
+      throw new Error("测试前需要授予网站访问权限。");
+    }
+    const mode = getSiteEditorMode();
+    if (mode === "code") {
+      if (!site.code.trim()) {
+        throw new Error("JS 代码不能为空。");
+      }
+      const response = await chrome.runtime.sendMessage({
+        code: site.code,
+        origin: site.origin,
+        type: "TEST_SITE_CODE"
+      });
+      if (!response?.ok) {
+        throw new Error(response?.message || "代码测试失败。");
+      }
+      showSiteFeedback(
+        `platformRead() 返回：${response.text}`,
+        "success"
+      );
+    } else {
+      const response = await chrome.runtime.sendMessage({
+        autoDetect: site.autoDetect,
+        editorSelectors: site.editorSelectors,
+        origin: site.origin,
+        type: "TEST_SITE_SELECTORS"
+      });
+      if (!response?.ok) {
+        const details = response?.results?.length
+          ? ` ${response.results.map((result) => `${result.selector}：${result.matchCount} 个，${result.visibleCount} 个可见`).join("；")}`
+          : "";
+        throw new Error(`${response?.message || "测试失败。"}${details}`);
+      }
+      showSiteFeedback(
+        `测试成功：${response.usedAutoDetect ? "自动识别规则" : "自定义选择器"} ${response.selector}，匹配 ${response.matchCount} 个元素，已高亮 ${response.element}。`,
+        "success"
+      );
+    }
+  } catch (error) {
+    showSiteFeedback(error.message || "测试失败，请重试。", "error");
+  }
+}
+
+async function copyText(text, successMessage) {
+  try {
+    await navigator.clipboard.writeText(text);
+    elements.templateFeedback.textContent = successMessage;
+    elements.templateFeedback.className = "feedback visible success";
+  } catch (_error) {
+    elements.templateFeedback.textContent = "复制失败，请手动选择文本。";
+    elements.templateFeedback.className = "feedback visible error";
+  }
+}
+
+function renderTemplates() {
+  elements.templateList.replaceChildren();
+  AgentSiteModel.DEFAULT_SITE_TEMPLATES.forEach((template) => {
+    const card = document.createElement("article");
+    card.className = "template-card";
+    const title = document.createElement("h3");
+    title.textContent = template.name;
+    const origin = document.createElement("p");
+    origin.className = "template-origin";
+    origin.textContent = `${template.origin} · 自动识别：${template.autoDetect ? "开启" : "关闭"}`;
+    const selectors = document.createElement("pre");
+    selectors.className = "template-selectors";
+    selectors.textContent = template.editorSelectors.join("\n");
+    const actions = document.createElement("div");
+    actions.className = "template-actions";
+    const add = document.createElement("button");
+    add.className = "button primary";
+    add.type = "button";
+    add.textContent = "添加此网站";
+    add.disabled = state.sites.some((site) => site.origin === template.origin);
+    add.addEventListener("click", () => createSiteDraft(template));
+    const copyAsNew = document.createElement("button");
+    copyAsNew.className = "button secondary";
+    copyAsNew.type = "button";
+    copyAsNew.textContent = "复制为新网站";
+    copyAsNew.addEventListener("click", () => createSiteDraft({
+      ...template,
+      name: `${template.name} 副本`
+    }));
+    const copySelectors = document.createElement("button");
+    copySelectors.className = "button secondary";
+    copySelectors.type = "button";
+    copySelectors.textContent = "复制选择器";
+    copySelectors.addEventListener("click", () => copyText(
+      template.editorSelectors.join("\n"),
+      `已复制 ${template.name} 的选择器。`
+    ));
+    actions.append(add, copyAsNew, copySelectors);
+    card.append(title, origin, selectors, actions);
+    elements.templateList.append(card);
+  });
+}
+
 async function initialize() {
   await AgentProfileStore.initialize();
-  const [profiles, commands] = await Promise.all([
+  const [profiles, sites, commands] = await Promise.all([
     AgentProfileStore.getAllProfiles(),
+    AgentProfileStore.getAllSites(),
     chrome.commands.getAll()
   ]);
   state.profiles = profiles;
+  state.sites = sites;
   state.commandShortcuts = new Set(
     commands.map((command) => command.shortcut?.toLowerCase()).filter(Boolean)
   );
   state.selectedId = profiles[0]?.id || null;
+  state.selectedSiteId = sites[0]?.id || null;
   renderList();
   renderEditor();
+  renderSiteList();
+  renderSiteEditor();
+  renderTemplates();
 }
 
 elements.addText.addEventListener("click", addTextProfile);
@@ -610,7 +1051,7 @@ elements.clearShortcut.addEventListener("click", () => {
   renderShortcut();
 });
 elements.siteAll.addEventListener("change", () => {
-  elements.siteOptions.forEach((input) => {
+  siteOptionInputs().forEach((input) => {
     input.disabled = elements.siteAll.checked;
     if (elements.siteAll.checked) {
       input.checked = false;
@@ -620,6 +1061,28 @@ elements.siteAll.addEventListener("change", () => {
 elements.exportButton.addEventListener("click", exportProfiles);
 elements.importButton.addEventListener("click", () => elements.importInput.click());
 elements.importInput.addEventListener("change", importProfiles);
+elements.profilesTab.addEventListener("click", () => switchView("profiles"));
+elements.sitesTab.addEventListener("click", () => switchView("sites"));
+document.querySelectorAll("input[name='site-editor-mode']").forEach((radio) => {
+  radio.addEventListener("change", () => {
+    if (radio.checked) {
+      setSiteEditorMode(radio.value);
+      elements.testSite.textContent = radio.value === "code" ? "测试代码" : "测试选择器";
+    }
+  });
+});
+
+elements.addSite.addEventListener("click", () => createSiteDraft());
+elements.siteForm.addEventListener("submit", saveSite);
+elements.authorizeSite.addEventListener("click", authorizeCurrentSite);
+elements.deleteSite.addEventListener("click", deleteCurrentSite);
+elements.testSite.addEventListener("click", testCurrentSite);
+elements.copySite.addEventListener("click", () => {
+  const site = selectedSite();
+  if (site) {
+    createSiteDraft({ ...site, name: `${site.name} 副本` });
+  }
+});
 
 initialize().catch(() => {
   showFeedback("无法读取扩展配置，请重新加载扩展后重试。", "error");

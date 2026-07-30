@@ -135,6 +135,28 @@ p {
   color: #344054;
 }
 
+.button.export-json {
+  border-color: #86efac;
+  background: #ecfdf3;
+  color: #047857;
+}
+
+.button.import-json {
+  border-color: #fdba74;
+  background: #fff7ed;
+  color: #c2410c;
+}
+
+.button.export-json:focus-visible {
+  outline: 3px solid rgba(5, 150, 105, 0.22);
+  outline-offset: 2px;
+}
+
+.button.import-json:focus-visible {
+  outline: 3px solid rgba(234, 88, 12, 0.22);
+  outline-offset: 2px;
+}
+
 .button.ghost {
   border-color: #e4e7ec;
   background: #f8fafc;

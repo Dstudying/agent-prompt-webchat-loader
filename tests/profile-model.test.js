@@ -48,18 +48,36 @@ assert.equal(backup.profiles[0].startMarker, DEFAULT_PROFILE_START_MARKER);
 assert.equal(backup.profiles[0].endMarker, DEFAULT_PROFILE_END_MARKER);
 assert.equal(validateBackup(JSON.parse(JSON.stringify(backup))).length, 1);
 const editedFileBackup = createBackup([createProfile({
+  content: "插件内修改内容。",
   contentEdited: true,
   fileName: "AGENTS.md",
+  sourceContent: "来源文件内容。",
   sourceType: "file"
 })]);
 assert.equal(
   validateBackup(JSON.parse(JSON.stringify(editedFileBackup)))[0].contentEdited,
   true
 );
+assert.equal(
+  validateBackup(JSON.parse(JSON.stringify(editedFileBackup)))[0].sourceContent,
+  "来源文件内容。"
+);
 const legacyFileBackup = JSON.parse(JSON.stringify(editedFileBackup));
 delete legacyFileBackup.profiles[0].contentEdited;
+delete legacyFileBackup.profiles[0].sourceContent;
 assert.equal(validateBackup(legacyFileBackup)[0].contentEdited, false);
+assert.equal(
+  validateBackup(legacyFileBackup)[0].sourceContent,
+  "插件内修改内容。"
+);
 assert.equal(validateProfiles([createProfile({ contentEdited: true })])[0].contentEdited, false);
+assert.equal(
+  Object.prototype.hasOwnProperty.call(
+    validateProfiles([createProfile({ sourceContent: "忽略的来源内容。" })])[0],
+    "sourceContent"
+  ),
+  false
+);
 assert.equal(
   formatLocalDateTime(new Date(2026, 6, 22, 15, 30, 45)),
   "2026-07-22 15:30:45"
@@ -143,6 +161,10 @@ assert.throws(
 assert.throws(
   () => validateProfiles([{ ...profile, contentEdited: "true" }]),
   /正文编辑状态必须是布尔值/
+);
+assert.throws(
+  () => validateProfiles([{ ...profile, sourceContent: true }]),
+  /来源正文必须是文本/
 );
 
 console.log("profile-model tests passed");

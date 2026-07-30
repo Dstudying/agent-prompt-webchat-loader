@@ -7,6 +7,9 @@ importScripts(
 );
 
 const SUPPORTED_ORIGINS = new Set(AgentProfileModel.SUPPORTED_ORIGINS);
+const SUPPORTED_URL_PATTERNS = AgentProfileModel.SUPPORTED_ORIGINS.map(
+  (origin) => `${origin}/*`
+);
 
 class ImportFailure extends Error {
   constructor(code, message) {
@@ -95,20 +98,54 @@ async function getProfilesForOrigin(origin, profileId = null) {
   return Promise.all(matches.map(resolveProfile));
 }
 
+async function installContentScript(tabId) {
+  await chrome.scripting.executeScript({
+    files: [
+      "lib/profile-model.js",
+      "lib/instruction-block.js",
+      "content/content.js"
+    ],
+    target: { tabId }
+  });
+}
+
 async function sendToContentScript(tabId, message) {
   try {
     return await chrome.tabs.sendMessage(tabId, message);
   } catch (_error) {
-    await chrome.scripting.executeScript({
-      files: [
-        "lib/profile-model.js",
-        "lib/instruction-block.js",
-        "content/content.js"
-      ],
-      target: { tabId }
-    });
+    await installContentScript(tabId);
     return chrome.tabs.sendMessage(tabId, message);
   }
+}
+
+async function reloadTabShortcutIndex(tabId) {
+  try {
+    const response = await chrome.tabs.sendMessage(tabId, {
+      type: "RELOAD_SHORTCUT_INDEX"
+    });
+    if (response === undefined || response?.ok) {
+      return;
+    }
+  } catch (_error) {
+    // 页面没有可用内容脚本时，在下方重新安装。
+  }
+
+  await installContentScript(tabId);
+  const response = await chrome.tabs.sendMessage(tabId, {
+    type: "RELOAD_SHORTCUT_INDEX"
+  });
+  if (!response?.ok) {
+    throw new Error(response?.message || "快捷键索引同步失败。");
+  }
+}
+
+async function refreshShortcutContexts() {
+  const tabs = await chrome.tabs.query({ url: SUPPORTED_URL_PATTERNS });
+  await Promise.allSettled(
+    tabs
+      .filter((tab) => Number.isInteger(tab.id))
+      .map((tab) => reloadTabShortcutIndex(tab.id))
+  );
 }
 
 async function showBadge(tabId, text, title) {
@@ -178,6 +215,15 @@ chrome.runtime.onInstalled.addListener(() => {
 
 chrome.runtime.onStartup.addListener(() => {
   AgentProfileStore.initialize().catch(() => {});
+});
+
+chrome.storage.onChanged.addListener((changes, areaName) => {
+  if (
+    areaName === "local"
+    && changes[AgentProfileStore.SHORTCUT_INDEX_REVISION_KEY]
+  ) {
+    refreshShortcutContexts().catch(() => {});
+  }
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {

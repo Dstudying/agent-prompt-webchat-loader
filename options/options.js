@@ -11,13 +11,13 @@ const state = {
   draftShortcut: null,
   profiles: [],
   recording: false,
-  selectedId: null,
-  filePreviewOriginalContent: null
+  selectedId: null
 };
 
 const elements = {
   addFile: document.getElementById("add-file"),
   addText: document.getElementById("add-text"),
+  associateFile: document.getElementById("associate-file"),
   clearShortcut: document.getElementById("clear-shortcut"),
   content: document.getElementById("content-input"),
   deleteButton: document.getElementById("delete-button"),
@@ -40,7 +40,6 @@ const elements = {
   profileCount: document.getElementById("profile-count"),
   profileList: document.getElementById("profile-list"),
   reloadFile: document.getElementById("reload-file"),
-  rebindFile: document.getElementById("rebind-file"),
   shortcutRecorder: document.getElementById("shortcut-recorder"),
   siteAll: document.getElementById("site-all"),
   siteOptions: Array.from(document.querySelectorAll(".site-option")),
@@ -80,8 +79,17 @@ function sourceStatus(profile) {
       : "已关联本地文件；读取失败时使用正文缓存";
   }
   return profile.contentEdited
-    ? "使用已修改的导入副本；来源文件需要重新关联"
-    : "JSON 或浏览器文件快照；可重新关联本地文件";
+    ? "使用已修改的导入副本；重新读取可恢复来源快照"
+    : "使用来源文件快照；关联文件后可读取磁盘最新内容";
+}
+
+function getSourceContent(profile) {
+  if (profile?.sourceType !== "file") {
+    return "";
+  }
+  return typeof profile.sourceContent === "string"
+    ? profile.sourceContent
+    : profile.content;
 }
 
 function renderShortcut() {
@@ -154,8 +162,7 @@ function renderEditor() {
     || AgentProfileModel.DEFAULT_PROFILE_END_MARKER;
   elements.fileName.textContent = profile.fileName || "AGENTS.md";
   elements.fileStatus.textContent = sourceStatus(profile);
-  elements.reloadFile.disabled = profile.sourceType !== "file" || !profile.handle?.getFile;
-  state.filePreviewOriginalContent = profile.sourceType === "file" ? profile.content : null;
+  elements.reloadFile.disabled = profile.sourceType !== "file";
   elements.siteAll.checked = profile.sites.includes("*");
   elements.startMarker.value = profile.startMarker
     || AgentProfileModel.DEFAULT_PROFILE_START_MARKER;
@@ -190,7 +197,7 @@ function cacheCurrentDraft() {
 
 function createProfile(sourceType, values = {}) {
   const now = AgentProfileModel.formatLocalDateTime();
-  return {
+  const profile = {
     content: values.content || "",
     contentEdited: false,
     createdAt: now,
@@ -208,6 +215,10 @@ function createProfile(sourceType, values = {}) {
     startMarker: values.startMarker || AgentProfileModel.DEFAULT_PROFILE_START_MARKER,
     updatedAt: now
   };
+  if (sourceType === "file") {
+    profile.sourceContent = values.sourceContent ?? values.content ?? "";
+  }
+  return profile;
 }
 
 function addTextProfile() {
@@ -291,11 +302,12 @@ function readFormProfile({ updateTimestamp = true } = {}) {
   const profile = selectedProfile();
   const placement = elements.form.querySelector("input[name='placement']:checked")?.value;
   const content = profile.sourceType === "text" ? elements.content.value : elements.fileContent.value;
+  const sourceContent = getSourceContent(profile);
   return {
     ...profile,
     content,
     contentEdited: profile.sourceType === "file"
-      ? Boolean(profile.contentEdited || content !== state.filePreviewOriginalContent)
+      ? content !== sourceContent
       : false,
     enabled: elements.enabled.checked,
     endMarker: elements.endMarker.value.trim()
@@ -304,6 +316,7 @@ function readFormProfile({ updateTimestamp = true } = {}) {
     placement,
     shortcut: state.draftShortcut,
     sites: getSelectedSites(),
+    ...(profile.sourceType === "file" ? { sourceContent } : {}),
     startMarker: elements.startMarker.value.trim()
       || AgentProfileModel.DEFAULT_PROFILE_START_MARKER,
     updatedAt: updateTimestamp
@@ -340,17 +353,11 @@ async function saveCurrentProfile(event) {
   }
 }
 
-async function rebindFile() {
+async function associateFile() {
   const profile = selectedProfile();
   if (!profile || profile.sourceType !== "file") {
     return;
   }
-  if (hasFileContentChanges(profile) && !confirm(
-    "重新关联会放弃当前导入副本修改，是否继续？"
-  )) {
-    return;
-  }
-  const draftProfile = readFormProfile({ updateTimestamp: false });
   try {
     let file;
     let handle;
@@ -374,7 +381,19 @@ async function rebindFile() {
       input.addEventListener("change", async () => {
         const selected = input.files[0];
         if (selected) {
-          await applyReboundFile(draftProfile, selected, null);
+          if (hasFileContentChanges(profile) && !confirm(
+            "关联其他本地文件会放弃当前导入副本修改，是否继续？"
+          )) {
+            input.remove();
+            return;
+          }
+          try {
+            const draftProfile = readFormProfile({ updateTimestamp: false });
+            await applySourceFile(draftProfile, selected, null);
+            showFeedback("已关联本地文件。", "success");
+          } catch (_error) {
+            showFeedback("关联文件失败，请重试。", "error");
+          }
         }
         input.remove();
       }, { once: true });
@@ -382,52 +401,76 @@ async function rebindFile() {
       input.click();
       return;
     }
-    await applyReboundFile(draftProfile, file, handle);
+    if (hasFileContentChanges(profile) && !confirm(
+      "关联其他本地文件会放弃当前导入副本修改，是否继续？"
+    )) {
+      return;
+    }
+    const draftProfile = readFormProfile({ updateTimestamp: false });
+    await applySourceFile(draftProfile, file, handle);
+    showFeedback("已关联本地文件。", "success");
   } catch (error) {
     if (error?.name !== "AbortError") {
-      showFeedback("重新关联文件失败，请重试。", "error");
+      showFeedback("关联文件失败，请重试。", "error");
     }
   }
 }
 
-async function applyReboundFile(profile, file, handle) {
+async function applySourceFile(profile, file, handle) {
+  const content = await file.text();
+  await applySourceContent(profile, content, file.name, handle);
+}
+
+async function applySourceContent(profile, content, fileName, handle) {
   const updated = {
     ...profile,
-    content: await file.text(),
+    content,
     contentEdited: false,
-    fileName: file.name,
+    fileName,
     handle,
+    sourceContent: content,
     updatedAt: AgentProfileModel.formatLocalDateTime()
   };
   await AgentProfileStore.putProfile(updated);
   state.profiles = state.profiles.map((entry) => entry.id === updated.id ? updated : entry);
   renderList();
   renderEditor();
-  showFeedback("本地文件已重新关联。", "success");
 }
 
 function hasFileContentChanges(profile) {
   return Boolean(
     profile?.sourceType === "file"
-    && (profile.contentEdited || elements.fileContent.value !== profile.content)
+    && elements.fileContent.value !== getSourceContent(profile)
   );
 }
 
 async function reloadFile() {
   const profile = selectedProfile();
-  if (!profile || profile.sourceType !== "file" || !profile.handle?.getFile) {
+  if (!profile || profile.sourceType !== "file") {
     return;
   }
-  if (hasFileContentChanges(profile) && !confirm(
-    "重新读取会放弃当前导入副本修改，是否继续？"
-  )) {
+  const hasHandle = Boolean(profile.handle?.getFile);
+  const confirmation = hasHandle
+    ? "重新读取将使用当前来源文件的磁盘内容覆盖预览，并放弃插件内所有修改。是否继续？"
+    : "重新读取将使用保存的来源快照覆盖预览，并放弃插件内所有修改。是否继续？";
+  if (!confirm(confirmation)) {
     return;
   }
   const draftProfile = readFormProfile({ updateTimestamp: false });
   try {
-    const file = await profile.handle.getFile();
-    await applyReboundFile(draftProfile, file, profile.handle);
-    showFeedback("已重新读取来源文件。", "success");
+    if (hasHandle) {
+      const file = await profile.handle.getFile();
+      await applySourceFile(draftProfile, file, profile.handle);
+      showFeedback("已重新读取来源文件。", "success");
+    } else {
+      await applySourceContent(
+        draftProfile,
+        getSourceContent(profile),
+        profile.fileName,
+        profile.handle
+      );
+      showFeedback("已恢复来源文件快照。", "success");
+    }
   } catch (_error) {
     showFeedback("重新读取来源文件失败，请重试。", "error");
   }
@@ -511,7 +554,11 @@ async function importProfiles() {
   try {
     const backup = JSON.parse(await file.text());
     const profiles = AgentProfileModel.validateBackup(backup);
-    if (!confirm(`导入将替换当前 ${state.profiles.length} 条配置，是否继续？`)) {
+    const importedCount = profiles.length;
+    const overwrittenCount = state.profiles.length;
+    if (!confirm(
+      `将导入 ${importedCount} 条配置，并覆盖当前 ${overwrittenCount} 条配置。是否继续？`
+    )) {
       return;
     }
     await AgentProfileStore.replaceProfiles(profiles);
@@ -519,9 +566,10 @@ async function importProfiles() {
     state.selectedId = profiles[0]?.id || null;
     renderList();
     renderEditor();
-    if (state.selectedId) {
-      showFeedback(`已导入 ${profiles.length} 条配置。`, "success");
-    }
+    showFeedback(
+      `导入完成：共导入 ${importedCount} 条配置，覆盖 ${overwrittenCount} 条原有配置。`,
+      "success"
+    );
   } catch (error) {
     showFeedback(error.message || "JSON 导入失败，现有配置未更改。", "error");
   }
@@ -547,7 +595,7 @@ elements.addFile.addEventListener("click", addFiles);
 elements.fallbackFileInput.addEventListener("change", handleFallbackFiles);
 elements.form.addEventListener("submit", saveCurrentProfile);
 elements.deleteButton.addEventListener("click", deleteCurrentProfile);
-elements.rebindFile.addEventListener("click", rebindFile);
+elements.associateFile.addEventListener("click", associateFile);
 elements.reloadFile.addEventListener("click", reloadFile);
 elements.shortcutRecorder.addEventListener("click", () => {
   state.recording = true;

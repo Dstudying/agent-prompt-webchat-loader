@@ -1,12 +1,17 @@
 (function installContentScript() {
   "use strict";
 
-  if (globalThis.__chatWebAgentInstalled) {
-    return;
+  const previousInstallation = globalThis.__chatWebAgentInstalled;
+  if (previousInstallation && typeof previousInstallation.cleanup === "function") {
+    try {
+      previousInstallation.cleanup();
+    } catch (_error) {
+      // 旧扩展上下文可能已经失效，继续安装当前实例。
+    }
   }
-  globalThis.__chatWebAgentInstalled = true;
 
   const SHORTCUT_INDEX_KEY = "profileShortcutIndex";
+  const SHORTCUT_INDEX_REVISION_KEY = "profileShortcutIndexRevision";
   const SITE_SELECTORS = {
     "https://chat.deepseek.com": [
       "textarea#chat-input",
@@ -37,6 +42,7 @@
     "[contenteditable='true']"
   ];
   let shortcutIndex = [];
+  let disposed = false;
 
   function isVisibleEditor(element) {
     if (!(element instanceof HTMLElement)) {
@@ -209,6 +215,9 @@
 
   async function loadShortcutIndex() {
     const result = await chrome.storage.local.get(SHORTCUT_INDEX_KEY);
+    if (disposed) {
+      return;
+    }
     shortcutIndex = Array.isArray(result[SHORTCUT_INDEX_KEY])
       ? result[SHORTCUT_INDEX_KEY]
       : [];
@@ -244,17 +253,31 @@
     });
   }
 
-  chrome.storage.onChanged.addListener((changes, areaName) => {
-    if (areaName === "local" && changes[SHORTCUT_INDEX_KEY]) {
+  function handleStorageChanged(changes, areaName) {
+    if (areaName !== "local") {
+      return;
+    }
+    if (changes[SHORTCUT_INDEX_KEY]) {
       shortcutIndex = Array.isArray(changes[SHORTCUT_INDEX_KEY].newValue)
         ? changes[SHORTCUT_INDEX_KEY].newValue
         : [];
     }
-  });
-  document.addEventListener("keydown", handleShortcut, true);
-  loadShortcutIndex().catch(() => {});
+    if (changes[SHORTCUT_INDEX_REVISION_KEY]) {
+      loadShortcutIndex().catch(() => {});
+    }
+  }
 
-  chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  function handleWindowFocus() {
+    loadShortcutIndex().catch(() => {});
+  }
+
+  function handleVisibilityChange() {
+    if (!document.hidden) {
+      loadShortcutIndex().catch(() => {});
+    }
+  }
+
+  function handleRuntimeMessage(message, _sender, sendResponse) {
     if (message?.type === "INJECT_PROFILES") {
       const result = injectProfiles(message.profiles || []);
       if (!result.ok) {
@@ -268,6 +291,43 @@
       sendResponse({ ok: true });
       return false;
     }
+    if (message?.type === "RELOAD_SHORTCUT_INDEX") {
+      loadShortcutIndex()
+        .then(() => sendResponse({ ok: true }))
+        .catch(() => sendResponse({
+          message: "快捷键索引读取失败。",
+          ok: false
+        }));
+      return true;
+    }
     return false;
-  });
+  }
+
+  function cleanup() {
+    disposed = true;
+    document.removeEventListener("keydown", handleShortcut, true);
+    document.removeEventListener("visibilitychange", handleVisibilityChange);
+    window.removeEventListener("focus", handleWindowFocus);
+    try {
+      chrome.storage.onChanged.removeListener(handleStorageChanged);
+    } catch (_error) {
+      // 扩展重新加载后旧上下文无法再访问 Chrome API。
+    }
+    try {
+      chrome.runtime.onMessage.removeListener(handleRuntimeMessage);
+    } catch (_error) {
+      // 扩展重新加载后旧上下文无法再访问 Chrome API。
+    }
+    if (globalThis.__chatWebAgentInstalled?.cleanup === cleanup) {
+      delete globalThis.__chatWebAgentInstalled;
+    }
+  }
+
+  chrome.storage.onChanged.addListener(handleStorageChanged);
+  document.addEventListener("keydown", handleShortcut, true);
+  document.addEventListener("visibilitychange", handleVisibilityChange);
+  window.addEventListener("focus", handleWindowFocus);
+  chrome.runtime.onMessage.addListener(handleRuntimeMessage);
+  globalThis.__chatWebAgentInstalled = { cleanup };
+  loadShortcutIndex().catch(() => {});
 })();

@@ -73,7 +73,16 @@
               <strong id="file-name">AGENTS.md</strong>
               <p id="file-status">已保存正文快照</p>
             </div>
-            <button id="rebind-file" class="button secondary" type="button">重新关联</button>
+            <div class="file-actions">
+              <button id="reload-file" class="button secondary" type="button">重新读取</button>
+              <button id="rebind-file" class="button secondary" type="button">重新关联</button>
+            </div>
+          </div>
+
+          <div id="file-preview-section" class="field file-preview-section" hidden>
+            <label for="file-content-input">导入内容预览</label>
+            <textarea id="file-content-input" rows="16" spellcheck="false"></textarea>
+            <p class="field-hint">这里的修改只保存在插件中，不会写回来源文件。</p>
           </div>
 
           <div class="marker-fields">

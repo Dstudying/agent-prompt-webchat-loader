@@ -47,6 +47,19 @@ assert.match(backup.exportedAt, /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/);
 assert.equal(backup.profiles[0].startMarker, DEFAULT_PROFILE_START_MARKER);
 assert.equal(backup.profiles[0].endMarker, DEFAULT_PROFILE_END_MARKER);
 assert.equal(validateBackup(JSON.parse(JSON.stringify(backup))).length, 1);
+const editedFileBackup = createBackup([createProfile({
+  contentEdited: true,
+  fileName: "AGENTS.md",
+  sourceType: "file"
+})]);
+assert.equal(
+  validateBackup(JSON.parse(JSON.stringify(editedFileBackup)))[0].contentEdited,
+  true
+);
+const legacyFileBackup = JSON.parse(JSON.stringify(editedFileBackup));
+delete legacyFileBackup.profiles[0].contentEdited;
+assert.equal(validateBackup(legacyFileBackup)[0].contentEdited, false);
+assert.equal(validateProfiles([createProfile({ contentEdited: true })])[0].contentEdited, false);
 assert.equal(
   formatLocalDateTime(new Date(2026, 6, 22, 15, 30, 45)),
   "2026-07-22 15:30:45"
@@ -126,6 +139,10 @@ assert.throws(
 assert.throws(
   () => validateProfiles([{ ...profile, enabled: "true" }]),
   /启用状态必须是布尔值/
+);
+assert.throws(
+  () => validateProfiles([{ ...profile, contentEdited: "true" }]),
+  /正文编辑状态必须是布尔值/
 );
 
 console.log("profile-model tests passed");

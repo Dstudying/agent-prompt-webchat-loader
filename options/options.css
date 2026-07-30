@@ -338,6 +338,23 @@ p {
   background: #f8fafc;
 }
 
+.file-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.file-preview-section textarea {
+  min-height: 280px;
+}
+
+.field-hint {
+  margin-top: 6px;
+  color: #667085;
+  font-size: 11px;
+}
+
 .file-source strong {
   display: block;
   font-size: 13px;

@@ -11,7 +11,8 @@ const state = {
   draftShortcut: null,
   profiles: [],
   recording: false,
-  selectedId: null
+  selectedId: null,
+  filePreviewOriginalContent: null
 };
 
 const elements = {
@@ -28,6 +29,8 @@ const elements = {
   fallbackFileInput: document.getElementById("fallback-file-input"),
   feedback: document.getElementById("feedback"),
   fileName: document.getElementById("file-name"),
+  fileContent: document.getElementById("file-content-input"),
+  filePreviewSection: document.getElementById("file-preview-section"),
   fileSection: document.getElementById("file-section"),
   fileStatus: document.getElementById("file-status"),
   form: document.getElementById("profile-form"),
@@ -36,6 +39,7 @@ const elements = {
   name: document.getElementById("name-input"),
   profileCount: document.getElementById("profile-count"),
   profileList: document.getElementById("profile-list"),
+  reloadFile: document.getElementById("reload-file"),
   rebindFile: document.getElementById("rebind-file"),
   shortcutRecorder: document.getElementById("shortcut-recorder"),
   siteAll: document.getElementById("site-all"),
@@ -71,9 +75,13 @@ function sourceStatus(profile) {
     return "文本配置";
   }
   if (profile.handle?.getFile) {
-    return "已关联本地文件；读取失败时使用正文缓存";
+    return profile.contentEdited
+      ? "使用已修改的导入副本；本地文件未更改"
+      : "已关联本地文件；读取失败时使用正文缓存";
   }
-  return "JSON 或浏览器文件快照；可重新关联本地文件";
+  return profile.contentEdited
+    ? "使用已修改的导入副本；来源文件需要重新关联"
+    : "JSON 或浏览器文件快照；可重新关联本地文件";
 }
 
 function renderShortcut() {
@@ -139,11 +147,15 @@ function renderEditor() {
   elements.sourceBadge.textContent = profile.sourceType === "file" ? "文件" : "文本";
   elements.textSection.hidden = profile.sourceType !== "text";
   elements.fileSection.hidden = profile.sourceType !== "file";
+  elements.filePreviewSection.hidden = profile.sourceType !== "file";
   elements.content.value = profile.content;
+  elements.fileContent.value = profile.content;
   elements.endMarker.value = profile.endMarker
     || AgentProfileModel.DEFAULT_PROFILE_END_MARKER;
   elements.fileName.textContent = profile.fileName || "AGENTS.md";
   elements.fileStatus.textContent = sourceStatus(profile);
+  elements.reloadFile.disabled = profile.sourceType !== "file" || !profile.handle?.getFile;
+  state.filePreviewOriginalContent = profile.sourceType === "file" ? profile.content : null;
   elements.siteAll.checked = profile.sites.includes("*");
   elements.startMarker.value = profile.startMarker
     || AgentProfileModel.DEFAULT_PROFILE_START_MARKER;
@@ -180,6 +192,7 @@ function createProfile(sourceType, values = {}) {
   const now = AgentProfileModel.formatLocalDateTime();
   return {
     content: values.content || "",
+    contentEdited: false,
     createdAt: now,
     enabled: true,
     endMarker: values.endMarker || AgentProfileModel.DEFAULT_PROFILE_END_MARKER,
@@ -277,9 +290,13 @@ function getSelectedSites() {
 function readFormProfile({ updateTimestamp = true } = {}) {
   const profile = selectedProfile();
   const placement = elements.form.querySelector("input[name='placement']:checked")?.value;
+  const content = profile.sourceType === "text" ? elements.content.value : elements.fileContent.value;
   return {
     ...profile,
-    content: profile.sourceType === "text" ? elements.content.value : profile.content,
+    content,
+    contentEdited: profile.sourceType === "file"
+      ? Boolean(profile.contentEdited || content !== state.filePreviewOriginalContent)
+      : false,
     enabled: elements.enabled.checked,
     endMarker: elements.endMarker.value.trim()
       || AgentProfileModel.DEFAULT_PROFILE_END_MARKER,
@@ -328,6 +345,12 @@ async function rebindFile() {
   if (!profile || profile.sourceType !== "file") {
     return;
   }
+  if (hasFileContentChanges(profile) && !confirm(
+    "重新关联会放弃当前导入副本修改，是否继续？"
+  )) {
+    return;
+  }
+  const draftProfile = readFormProfile({ updateTimestamp: false });
   try {
     let file;
     let handle;
@@ -351,7 +374,7 @@ async function rebindFile() {
       input.addEventListener("change", async () => {
         const selected = input.files[0];
         if (selected) {
-          await applyReboundFile(profile, selected, null);
+          await applyReboundFile(draftProfile, selected, null);
         }
         input.remove();
       }, { once: true });
@@ -359,7 +382,7 @@ async function rebindFile() {
       input.click();
       return;
     }
-    await applyReboundFile(profile, file, handle);
+    await applyReboundFile(draftProfile, file, handle);
   } catch (error) {
     if (error?.name !== "AbortError") {
       showFeedback("重新关联文件失败，请重试。", "error");
@@ -371,6 +394,7 @@ async function applyReboundFile(profile, file, handle) {
   const updated = {
     ...profile,
     content: await file.text(),
+    contentEdited: false,
     fileName: file.name,
     handle,
     updatedAt: AgentProfileModel.formatLocalDateTime()
@@ -380,6 +404,33 @@ async function applyReboundFile(profile, file, handle) {
   renderList();
   renderEditor();
   showFeedback("本地文件已重新关联。", "success");
+}
+
+function hasFileContentChanges(profile) {
+  return Boolean(
+    profile?.sourceType === "file"
+    && (profile.contentEdited || elements.fileContent.value !== profile.content)
+  );
+}
+
+async function reloadFile() {
+  const profile = selectedProfile();
+  if (!profile || profile.sourceType !== "file" || !profile.handle?.getFile) {
+    return;
+  }
+  if (hasFileContentChanges(profile) && !confirm(
+    "重新读取会放弃当前导入副本修改，是否继续？"
+  )) {
+    return;
+  }
+  const draftProfile = readFormProfile({ updateTimestamp: false });
+  try {
+    const file = await profile.handle.getFile();
+    await applyReboundFile(draftProfile, file, profile.handle);
+    showFeedback("已重新读取来源文件。", "success");
+  } catch (_error) {
+    showFeedback("重新读取来源文件失败，请重试。", "error");
+  }
 }
 
 async function deleteCurrentProfile() {
@@ -497,6 +548,7 @@ elements.fallbackFileInput.addEventListener("change", handleFallbackFiles);
 elements.form.addEventListener("submit", saveCurrentProfile);
 elements.deleteButton.addEventListener("click", deleteCurrentProfile);
 elements.rebindFile.addEventListener("click", rebindFile);
+elements.reloadFile.addEventListener("click", reloadFile);
 elements.shortcutRecorder.addEventListener("click", () => {
   state.recording = true;
   clearFeedback();

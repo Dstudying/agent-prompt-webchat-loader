@@ -102,7 +102,45 @@
 }
 ```
 
-备份包含规范配置以及实际使用的网站名称、origin、选择器和自动识别状态。只读参考模板不重复写入备份。浏览器文件句柄、网站授权状态、最后导入记录及任何聊天内容不会导出。
+JSON 格式分为两个顶层数组：`profiles`（规范配置）和 `sites`（网站适配）。
+
+`profiles` 数组的每个对象包含：
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | string | 是 | 配置唯一 UUID，用于替换和去重 |
+| `name` | string | 是 | 显示名称 |
+| `content` | string | 是 | 规范正文 |
+| `enabled` | boolean | 是 | 是否启用 |
+| `sourceType` | `"text"` / `"file"` | 是 | 文本配置或文件配置 |
+| `placement` | `"prepend"` / `"append"` | 是 | 插入输入框首行或末尾 |
+| `startMarker` | string | 是 | 开头标记，留空时使用默认标记 |
+| `endMarker` | string | 是 | 结尾标记，不能与开头标记相同 |
+| `sites` | string[] | 是 | 适用网站 ID 列表；`["*"]` 表示全部网站 |
+| `shortcut` | object / null | 否 | 动态快捷键，录制得到的组合键对象 |
+| `createdAt` | string | 是 | 创建时间，格式 `YYYY-MM-DD HH:mm:ss` |
+| `updatedAt` | string | 是 | 更新时间，同上 |
+| `fileName` | string | 文件配置 | 来源文件名，`sourceType: "file"` 时存在 |
+| `sourceContent` | string | 文件配置 | 来源文件快照，`sourceType: "file"` 时存在 |
+
+`shortcut` 对象固定包含 `altKey`、`code`、`ctrlKey`、`metaKey`、`shiftKey` 五个布尔值或字符串字段，`code` 是按键的 `event.code` 值。
+
+`sites` 数组的每个对象包含：
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | string | 是 | 网站唯一 UUID，被 `profiles[].sites` 引用 |
+| `name` | string | 是 | 网站显示名称 |
+| `origin` | string | 是 | 网站地址，只支持 HTTP/HTTPS，统一为 `origin` 格式 |
+| `autoDetect` | boolean | 是 | 选择器未命中时是否回退到通用自动识别 |
+| `editorSelectors` | string[] | 选择器模式 | 输入框 CSS 选择器列表，按优先级从上到下排列 |
+| `code` | string | JS 模式 | 自定义 JS 代码，包含 `platformRead` / `platformWrite` 两个函数 |
+| `createdAt` | string | 是 | 创建时间，格式同上 |
+| `updatedAt` | string | 是 | 更新时间，同上 |
+
+网站必须至少提供一条 `editorSelectors`，或开启 `autoDetect`，或提供 `code`，否则校验失败。
+
+备份包含规范配置以及实际使用的网站名称、origin、选择器（或自定义代码）和自动识别状态。只读参考模板不重复写入备份。浏览器文件句柄、网站授权状态、最后导入记录及任何聊天内容不会导出。
 
 `exportedAt`、`createdAt` 和 `updatedAt` 均使用浏览器本地时间，格式固定为 `YYYY-MM-DD HH:mm:ss`，字符串不携带时区偏移量。备份格式当前为 `schemaVersion: 3`，并兼容导入 `schemaVersion: 2` 的旧版 JSON。
 
@@ -133,9 +171,118 @@ manifest.json Manifest V3 配置
 
 ## 站点适配
 
-普通网站可以直接在设置页添加，无需修改扩展代码。选择器应优先使用稳定的 `data-*` 属性、`role="textbox"`、`contenteditable="true"` 或稳定 `placeholder`，并保证只匹配一个可见编辑器。
+普通网站可以直接在设置页添加，无需修改扩展代码。每个网站的适配有两种方式：
 
-维护参考模板时，只修改 `lib/site-model.js` 中的集中模板数据。模板更新不会覆盖用户已保存的网站配置。当前实现不能直接访问跨域 iframe 或封闭 Shadow DOM 内的编辑器。
+- **CSS 选择器**：适合大多数 `textarea` 或 `contenteditable` 输入框。填写多条有优先级的选择器，并可在设置页直接"测试选择器"高亮匹配元素。
+- **自定义 JS 代码**：用于 CSS 选择器无法可靠读取或写入的编辑器（例如千问的 Slate 编辑器），需要提供 `platformRead` / `platformWrite` 两个函数。在网页大模型的浏览器开发者工具控制台（F12）中`console`调用 `platformWrite("text")`，预期效果：页面输入框自动填入“text”，且“发送”按钮的 UI 状态发生相应变化。随后调用 `platformRead()`，应能正确读取此前由 `platformWrite` 写入的内容。
+
+两种方式任选其一；选择器方式还可以开启"通用输入框自动识别"作为兜底。
+
+### 内置网站模板
+
+扩展首次安装会创建以下 4 个只读参考模板（删除后仍可从设置页重新添加）：
+
+| 网站 | 地址 | 自动识别 | 适配方式 |
+|---|---|---|---|
+| DeepSeek | `https://chat.deepseek.com` | 开启 | CSS 选择器 |
+| 豆包 | `https://www.doubao.com` | 开启 | CSS 选择器 |
+| 千问 | `https://www.qianwen.com` | 开启 | JS 代码 |
+| ChatGPT | `https://chatgpt.com` | 开启 | CSS 选择器 |
+
+各网站的完整选择器列表见 `lib/site-model.js` 中的 `DEFAULT_SITE_TEMPLATES`。维护参考模板时，只修改该集中模板数据；模板更新不会覆盖用户已保存的网站配置。当前实现不能直接访问跨域 iframe 或封闭 Shadow DOM 内的编辑器。
+
+### CSS 选择器编写指南
+
+扩展按列表顺序依次尝试每条选择器，**遇到恰好匹配一个可见且可编辑的元素就立即使用**，因此应把最稳定、最有把握的选择器放在前面。
+
+以 DeepSeek 为例，内置选择器如下：
+
+```text
+textarea#chat-input
+textarea[placeholder*='DeepSeek']
+textarea[placeholder*='发送消息']
+[contenteditable='true'][data-lexical-editor='true']
+[contenteditable='true'][role='textbox']
+```
+
+逐条说明：
+
+| 选择器 | 匹配思路 |
+|---|---|
+| `textarea#chat-input` | 页面为输入框提供了稳定唯一的 ID，优先使用，最简单可靠 |
+| `textarea[placeholder*='DeepSeek']` | 用 `placeholder` 文本模糊匹配网站英文关键词，`*=` 表示包含 |
+| `textarea[placeholder*='发送消息']` | 匹配中文 placeholder，用于页面文案变化时兜底 |
+| `[contenteditable='true'][data-lexical-editor='true']` | 富文本编辑器的特征属性（Lexical 框架），CSS 选择器可组合多个属性条件 |
+| `[contenteditable='true'][role='textbox']` | 同时满足可编辑和无障碍角色的通用规则，常作为最后兜底 |
+
+编写步骤：
+
+1. 打开目标网站，按 `F12` 打开开发者工具，在 Elements 面板点击"选择元素"图标，点选聊天输入框。
+2. 查看该元素的标签、`id`、`class`、`placeholder`、`contenteditable`、`role`、`data-*` 属性。
+3. 优先使用带 `id` 或稳定 `data-*` 属性的选择器；没有稳定属性时，用 `textarea[placeholder*='关键词']` 这类属性文本匹配。
+4. 不要使用类名中包含框架随机串（如 `css-1x8d7n4`）的选择器，页面改版后容易失效。
+5. 每条选择器在设置页独占一行，保存后点击"测试选择器"，确认**恰好匹配 1 个可见元素**，扩展会短暂高亮该输入框。
+6. 若某条选择器匹配 0 个或多个元素，扩展会自动跳到下一条继续尝试；全部失败则提示"没有找到唯一可用的聊天输入框"。
+
+注意事项：
+
+- 选择器必须只匹配一个可见编辑器。匹配到多个元素（例如隐藏的草稿编辑区）时不会被采用。
+- 聊天页面的输入框通常是动态生成的，改版后属性可能变化；必要时保留"通用输入框自动识别"作为回退。
+
+### 自定义 JS 代码（platformRead / platformWrite）
+
+某些编辑器并不把真实内容放在可见 DOM 文本中（例如千问基于 Slate 框架的编辑器），用选择器能找到输入框，却读不到、写不进有效内容。此时可在网站管理中切换到"JS 代码"模式。
+
+代码必须定义两个全局函数：
+
+| 函数 | 参数 | 返回值 | 作用 |
+|---|---|---|---|
+| `platformRead()` | 无 | 字符串 | 返回输入框当前的完整文本内容 |
+| `platformWrite(text)` | `text`：合并后的文本 | 无 | 把文本写入输入框，并触发页面事件让网页感知内容变化 |
+
+扩展先调用 `platformRead()` 读取当前草稿，把要插入的配置块合并进去，再调用 `platformWrite()` 写回，因此两个函数必须配套实现。
+
+以千问（Qwen）为例，完整代码如下：
+
+```javascript
+function platformRead() {
+  var el = document.querySelector('[data-slate-editor="true"]');
+  if (!el) return "";
+  var leaf = el.querySelector('[data-slate-leaf="true"]');
+  if (!leaf) return "";
+  var ts = leaf.querySelector('[data-slate-string="true"]');
+  return ts ? ts.textContent : "";
+}
+
+function platformWrite(text) {
+  var el = document.querySelector('[data-slate-editor="true"]');
+  if (!el) return;
+  el.focus();
+  var dt = new DataTransfer();
+  dt.setData("text/plain", text);
+  el.dispatchEvent(new ClipboardEvent("paste", {
+    clipboardData: dt, bubbles: true, cancelable: true
+  }));
+}
+```
+
+说明：
+
+- 千问把可见文本放在 `[data-slate-string="true"]` 节点里，`platformRead()` 沿 `data-slate-editor → data-slate-leaf → data-slate-string` 逐层定位文本。
+- 直接设置 `textContent` 无法让 Slate 更新内部状态，`platformWrite()` 改为模拟一次"粘贴"：通过 `DataTransfer` 携带文本并派发 `ClipboardEvent('paste')`，让框架按正常输入流程处理。
+- 代码在页面的 `MAIN` 世界执行，可访问页面自身的全局对象和框架内部 API。设置页的"测试代码"会调用 `platformRead()` 并显示返回值。
+- 代码应保持小而独立，只依赖 `document` 和 DOM API，不要引用扩展注入的其他变量。
+
+
+#### 步骤
+一、测试选择器是否可以唯一获取输入框对象
+![获取唯一选择器](assets/icons/readme/qwen/querySelector-1.png)
+
+二、定义platformRead和platformWrite函数
+![定义两个函数](assets/icons/readme/qwen/platformWrite-2.png)
+
+三、执行platformRead和platformWrite函数
+![执行两个函数](assets/icons/readme/qwen/platformRead-3.png)
 
 ## 开发检查
 

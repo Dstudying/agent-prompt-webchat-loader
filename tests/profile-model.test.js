@@ -89,12 +89,29 @@ assert.equal(
   formatLocalDateTime(new Date(2026, 6, 22, 15, 30, 45)),
   "2026-07-22 15:30:45"
 );
-const defaultedMarkers = validateProfiles([createProfile({
+const emptyMarkers = validateProfiles([createProfile({
   endMarker: " ",
   startMarker: " "
 })])[0];
-assert.equal(defaultedMarkers.startMarker, DEFAULT_PROFILE_START_MARKER);
-assert.equal(defaultedMarkers.endMarker, DEFAULT_PROFILE_END_MARKER);
+assert.equal(emptyMarkers.startMarker, "");
+assert.equal(emptyMarkers.endMarker, "");
+
+const missingMarkerProfile = createProfile();
+delete missingMarkerProfile.startMarker;
+delete missingMarkerProfile.endMarker;
+const [defaultedMissingMarkers] = validateProfiles([missingMarkerProfile]);
+assert.equal(defaultedMissingMarkers.startMarker, DEFAULT_PROFILE_START_MARKER);
+assert.equal(defaultedMissingMarkers.endMarker, DEFAULT_PROFILE_END_MARKER);
+
+const emptyMarkerBackup = createBackup([createProfile({
+  endMarker: "",
+  startMarker: ""
+})], sites);
+const [emptyMarkerRoundTrip] = validateBackup(
+  JSON.parse(JSON.stringify(emptyMarkerBackup))
+).profiles;
+assert.equal(emptyMarkerRoundTrip.startMarker, "");
+assert.equal(emptyMarkerRoundTrip.endMarker, "");
 const [normalizedLegacyTime] = validateProfiles([createProfile({
   createdAt: "2026-07-22T07:20:00.000Z",
   updatedAt: "2026-07-22T07:30:00.000Z"

@@ -207,14 +207,12 @@ function renderEditor() {
   elements.filePreviewSection.hidden = profile.sourceType !== "file";
   elements.content.value = profile.content;
   elements.fileContent.value = profile.content;
-  elements.endMarker.value = profile.endMarker
-    || AgentProfileModel.DEFAULT_PROFILE_END_MARKER;
+  elements.endMarker.value = profile.endMarker ?? "";
   elements.fileName.textContent = profile.fileName || "AGENTS.md";
   elements.fileStatus.textContent = sourceStatus(profile);
   elements.reloadFile.disabled = profile.sourceType !== "file";
   elements.siteAll.checked = profile.sites.includes("*");
-  elements.startMarker.value = profile.startMarker
-    || AgentProfileModel.DEFAULT_PROFILE_START_MARKER;
+  elements.startMarker.value = profile.startMarker ?? "";
   renderProfileSiteOptions();
   const placement = elements.form.querySelector(`input[name="placement"][value="${profile.placement}"]`);
   if (placement) {
@@ -248,7 +246,7 @@ function createProfile(sourceType, values = {}) {
     contentEdited: false,
     createdAt: now,
     enabled: true,
-    endMarker: values.endMarker || AgentProfileModel.DEFAULT_PROFILE_END_MARKER,
+    endMarker: values.endMarker ?? "",
     fileName: values.fileName || "",
     handle: values.handle,
     id: crypto.randomUUID(),
@@ -258,7 +256,7 @@ function createProfile(sourceType, values = {}) {
     shortcut: null,
     sites: ["*"],
     sourceType,
-    startMarker: values.startMarker || AgentProfileModel.DEFAULT_PROFILE_START_MARKER,
+    startMarker: values.startMarker ?? "",
     updatedAt: now
   };
   if (sourceType === "file") {
@@ -356,15 +354,13 @@ function readFormProfile({ updateTimestamp = true } = {}) {
       ? content !== sourceContent
       : false,
     enabled: elements.enabled.checked,
-    endMarker: elements.endMarker.value.trim()
-      || AgentProfileModel.DEFAULT_PROFILE_END_MARKER,
+    endMarker: elements.endMarker.value.trim(),
     name: elements.name.value.trim(),
     placement,
     shortcut: state.draftShortcut,
     sites: getSelectedSites(),
     ...(profile.sourceType === "file" ? { sourceContent } : {}),
-    startMarker: elements.startMarker.value.trim()
-      || AgentProfileModel.DEFAULT_PROFILE_START_MARKER,
+    startMarker: elements.startMarker.value.trim(),
     updatedAt: updateTimestamp
       ? AgentProfileModel.formatLocalDateTime()
       : profile.updatedAt

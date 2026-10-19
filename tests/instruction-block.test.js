@@ -83,11 +83,28 @@ const customMarkerProfile = {
 const customMarkerBlock = buildProfileBlock(customMarkerProfile);
 assert.ok(customMarkerBlock.startsWith("<<<自定义开始>>>"));
 assert.ok(customMarkerBlock.endsWith("<<<自定义结束>>>"));
+assert.equal(customMarkerBlock.includes("AGENTS 配置"), false);
 assert.equal(
   mergeProfileBlocks(`${customMarkerBlock}\n\n${draft}`, [
     { ...customMarkerProfile, content: "更新后的规范。" }
   ]),
   `${buildProfileBlock({ ...customMarkerProfile, content: "更新后的规范。" })}\n\n${draft}`
 );
+
+const emptyMarkerProfile = { ...firstProfile, endMarker: "", startMarker: "" };
+const emptyMarkerBlock = buildProfileBlock(emptyMarkerProfile);
+assert.equal(emptyMarkerBlock, "使用中文。");
+assert.equal(emptyMarkerBlock.includes("AGENTS 配置"), false);
+const emptyMarkerFirstImport = mergeProfileBlocks(draft, [emptyMarkerProfile]);
+assert.equal(emptyMarkerFirstImport, `${emptyMarkerBlock}\n\n${draft}`);
+assert.equal(
+  mergeProfileBlocks(emptyMarkerFirstImport, [emptyMarkerProfile]),
+  `${emptyMarkerBlock}\n\n${emptyMarkerFirstImport}`
+);
+
+const startOnlyProfile = { ...firstProfile, endMarker: "", startMarker: "<<<开始>>>" };
+assert.equal(buildProfileBlock(startOnlyProfile), "<<<开始>>>\n使用中文。");
+const endOnlyProfile = { ...firstProfile, endMarker: "<<<结束>>>", startMarker: "" };
+assert.equal(buildProfileBlock(endOnlyProfile), "使用中文。\n<<<结束>>>");
 
 console.log("instruction-block tests passed");

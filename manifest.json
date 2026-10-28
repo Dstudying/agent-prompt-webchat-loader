@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "AGENTS.md 对话导入器",
-  "version": "3.1.0",
-  "description": "管理多条 AGENTS.md 或文本规范，并按配置插入网页聊天输入框。",
+  "version": "3.2.0",
+  "description": "管理多条 AGENTS.md 或文本规范，并按配置插入网页聊天输入框。新增配置快捷面板，支持筛选和方向键插入",
   "permissions": [
     "storage",
     "activeTab",

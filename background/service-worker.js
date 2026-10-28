@@ -151,6 +151,30 @@ async function getProfilesForSite(siteId, profileId = null) {
   return Promise.all(matches.map(resolveProfile));
 }
 
+async function getPaletteProfiles(tabId) {
+  try {
+    const tab = await getTargetTab(tabId);
+    const site = await ensureSupportedTab(tab);
+    const profiles = await AgentProfileStore.getAllProfiles();
+    return {
+      ok: true,
+      profiles: profiles
+        .filter((profile) => (
+          profile.enabled && AgentProfileModel.matchesSite(profile.sites, site.id)
+        ))
+        .map((profile) => ({
+          id: profile.id,
+          name: profile.name,
+          placement: profile.placement,
+          shortcut: profile.shortcut
+        })),
+      siteName: site.name
+    };
+  } catch (error) {
+    return resultFromError(error);
+  }
+}
+
 async function installContentScript(tabId) {
   await chrome.scripting.executeScript({
     files: [
@@ -491,6 +515,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
   if (message?.type === "TEST_SITE_CODE") {
     testSiteCode(message).then(sendResponse);
+    return true;
+  }
+  if (message?.type === "GET_PALETTE_PROFILES") {
+    getPaletteProfiles(message.tabId ?? sender.tab?.id ?? null).then(sendResponse);
+    return true;
+  }
+  if (message?.type === "OPEN_OPTIONS") {
+    chrome.runtime.openOptionsPage()
+      .then(() => sendResponse({ ok: true }))
+      .catch((error) => sendResponse(resultFromError(error)));
     return true;
   }
   return false;

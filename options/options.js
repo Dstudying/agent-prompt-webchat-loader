@@ -3,6 +3,8 @@
 const state = {
   commandShortcuts: new Set(),
   draftShortcut: null,
+  paletteRecording: false,
+  paletteShortcut: null,
   profiles: [],
   recording: false,
   selectedId: null,
@@ -35,9 +37,12 @@ const elements = {
   importButton: document.getElementById("import-button"),
   importInput: document.getElementById("import-input"),
   name: document.getElementById("name-input"),
+  paletteShortcutFeedback: document.getElementById("palette-shortcut-feedback"),
+  paletteShortcutRecorder: document.getElementById("palette-shortcut-recorder"),
   profileCount: document.getElementById("profile-count"),
   profileList: document.getElementById("profile-list"),
   reloadFile: document.getElementById("reload-file"),
+  resetPaletteShortcut: document.getElementById("reset-palette-shortcut"),
   shortcutRecorder: document.getElementById("shortcut-recorder"),
   siteAll: document.getElementById("site-all"),
   siteOptionsContainer: document.getElementById("site-options"),
@@ -146,6 +151,73 @@ function renderShortcut() {
     ? "请按下组合键…"
     : AgentProfileModel.formatShortcut(state.draftShortcut) || "点击录制";
   elements.shortcutRecorder.classList.toggle("recording", state.recording);
+}
+
+function renderPaletteShortcut() {
+  elements.paletteShortcutRecorder.textContent = state.paletteRecording
+    ? "请按下组合键…"
+    : AgentProfileModel.formatShortcut(state.paletteShortcut) || "点击录制";
+  elements.paletteShortcutRecorder.classList.toggle("recording", state.paletteRecording);
+}
+
+function showPaletteFeedback(message = "", kind = "info") {
+  elements.paletteShortcutFeedback.textContent = message;
+  elements.paletteShortcutFeedback.className = `palette-shortcut-feedback visible ${kind}`;
+}
+
+function clearPaletteFeedback() {
+  elements.paletteShortcutFeedback.textContent = "";
+  elements.paletteShortcutFeedback.className = "palette-shortcut-feedback";
+}
+
+async function savePaletteShortcut(shortcut) {
+  await chrome.storage.local.set({
+    [AgentProfileModel.PALETTE_SHORTCUT_KEY]: shortcut
+  });
+  state.paletteShortcut = AgentProfileModel.normalizePaletteShortcut(shortcut);
+  state.paletteRecording = false;
+  renderPaletteShortcut();
+}
+
+function findProfileShortcutConflict(shortcut) {
+  const targetKey = AgentProfileModel.shortcutKey(shortcut);
+  return state.profiles.find((profile) => (
+    profile.enabled
+    && profile.shortcut
+    && AgentProfileModel.shortcutKey(profile.shortcut) === targetKey
+  )) || null;
+}
+
+function recordPaletteShortcut(event) {
+  if (!state.paletteRecording) {
+    return;
+  }
+  event.preventDefault();
+  event.stopPropagation();
+  if (event.code === "Escape") {
+    state.paletteRecording = false;
+    renderPaletteShortcut();
+    return;
+  }
+  const shortcut = AgentProfileModel.shortcutFromEvent(event);
+  if (!AgentProfileModel.isValidShortcut(shortcut)) {
+    showPaletteFeedback("快捷键至少需要 Ctrl、Alt 或 Meta，并包含一个非修饰键。", "error");
+    return;
+  }
+  if (state.commandShortcuts.has(
+    AgentProfileModel.formatShortcut(shortcut).toLowerCase()
+  )) {
+    showPaletteFeedback("该组合键已被浏览器扩展命令使用，请选择其他快捷键。", "error");
+    return;
+  }
+  const conflict = findProfileShortcutConflict(shortcut);
+  if (conflict) {
+    showPaletteFeedback(`该组合键已被配置“${conflict.name}”使用。`, "error");
+    return;
+  }
+  savePaletteShortcut(shortcut)
+    .then(() => showPaletteFeedback("快捷面板快捷键已保存。", "success"))
+    .catch(() => showPaletteFeedback("快捷键保存失败，请重试。", "error"));
 }
 
 function renderList() {
@@ -385,6 +457,14 @@ async function saveCurrentProfile(event) {
     )) {
       throw new Error("该组合键已被浏览器扩展命令使用，请选择其他快捷键。");
     }
+    if (
+      updated.shortcut
+      && state.paletteShortcut
+      && AgentProfileModel.shortcutKey(updated.shortcut)
+        === AgentProfileModel.shortcutKey(state.paletteShortcut)
+    ) {
+      throw new Error("该组合键已被快捷面板使用，请选择其他快捷键。");
+    }
 
     const normalizedProfile = normalized.find((profile) => profile.id === updated.id);
     const saved = { ...normalizedProfile, handle: updated.handle };
@@ -566,6 +646,10 @@ function recordShortcut(event) {
     showFeedback("快捷键至少需要 Ctrl、Alt 或 Meta，并包含一个非修饰键。", "error");
     return;
   }
+  if (AgentProfileModel.shortcutKey(shortcut) === AgentProfileModel.shortcutKey(state.paletteShortcut)) {
+    showFeedback("该组合键已被快捷面板使用，请选择其他快捷键。", "error");
+    return;
+  }
   state.draftShortcut = shortcut;
   state.recording = false;
   clearFeedback();
@@ -600,6 +684,17 @@ async function importProfiles() {
     const backup = JSON.parse(await file.text());
     const imported = AgentProfileModel.validateBackup(backup, validateSelectorSyntax);
     const { profiles, sites } = imported;
+    const paletteConflict = profiles.find((profile) => (
+      profile.enabled
+      && profile.shortcut
+      && AgentProfileModel.shortcutKey(profile.shortcut)
+        === AgentProfileModel.shortcutKey(state.paletteShortcut)
+    ));
+    if (paletteConflict) {
+      throw new Error(
+        `配置“${paletteConflict.name}”的快捷键与快捷面板快捷键冲突，请先修改面板快捷键后再导入。`
+      );
+    }
     const importedCount = profiles.length;
     const overwrittenCount = state.profiles.length;
     if (!confirm(
@@ -1008,19 +1103,24 @@ function renderTemplates() {
 
 async function initialize() {
   await AgentProfileStore.initialize();
-  const [profiles, sites, commands] = await Promise.all([
+  const [profiles, sites, commands, stored] = await Promise.all([
     AgentProfileStore.getAllProfiles(),
     AgentProfileStore.getAllSites(),
-    chrome.commands.getAll()
+    chrome.commands.getAll(),
+    chrome.storage.local.get(AgentProfileModel.PALETTE_SHORTCUT_KEY)
   ]);
   state.profiles = profiles;
   state.sites = sites;
+  state.paletteShortcut = AgentProfileModel.normalizePaletteShortcut(
+    stored[AgentProfileModel.PALETTE_SHORTCUT_KEY]
+  );
   state.commandShortcuts = new Set(
     commands.map((command) => command.shortcut?.toLowerCase()).filter(Boolean)
   );
   state.selectedId = profiles[0]?.id || null;
   state.selectedSiteId = sites[0]?.id || null;
   renderList();
+  renderPaletteShortcut();
   renderEditor();
   renderSiteList();
   renderSiteEditor();
@@ -1041,6 +1141,18 @@ elements.shortcutRecorder.addEventListener("click", () => {
   elements.shortcutRecorder.focus();
 });
 elements.shortcutRecorder.addEventListener("keydown", recordShortcut);
+elements.paletteShortcutRecorder.addEventListener("click", () => {
+  state.paletteRecording = true;
+  clearPaletteFeedback();
+  renderPaletteShortcut();
+  elements.paletteShortcutRecorder.focus();
+});
+elements.paletteShortcutRecorder.addEventListener("keydown", recordPaletteShortcut);
+elements.resetPaletteShortcut.addEventListener("click", () => {
+  savePaletteShortcut({ ...AgentProfileModel.DEFAULT_PALETTE_SHORTCUT })
+    .then(() => showPaletteFeedback("已恢复默认快捷键。", "success"))
+    .catch(() => showPaletteFeedback("快捷键保存失败，请重试。", "error"));
+});
 elements.clearShortcut.addEventListener("click", () => {
   state.draftShortcut = null;
   state.recording = false;

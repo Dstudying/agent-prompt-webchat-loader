@@ -41,6 +41,15 @@
         </div>
         <div id="profile-list" class="profile-list"></div>
         <p id="empty-list" class="empty-list">尚无配置。添加文本或选择 AGENTS.md 文件开始使用。</p>
+        <section class="palette-shortcut-card" aria-labelledby="palette-shortcut-title">
+          <div class="palette-shortcut-heading">
+            <strong id="palette-shortcut-title">快捷面板</strong>
+            <button id="palette-shortcut-recorder" class="shortcut-recorder compact" type="button">点击录制</button>
+          </div>
+          <p>在聊天页按下后列出当前网站可用配置，支持筛选和方向键选择。</p>
+          <button id="reset-palette-shortcut" class="button ghost" type="button">恢复默认 Ctrl+Shift+`</button>
+          <p id="palette-shortcut-feedback" class="palette-shortcut-feedback" role="status" aria-live="polite"></p>
+        </section>
       </aside>
 
       <section class="editor-pane" aria-labelledby="editor-title">

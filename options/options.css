@@ -254,6 +254,60 @@ p {
   text-align: center;
 }
 
+.palette-shortcut-card {
+  margin-top: 16px;
+  padding: 12px;
+  border: 1px solid #dfe4ea;
+  border-radius: 7px;
+  background: #ffffff;
+}
+
+.palette-shortcut-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.palette-shortcut-heading strong {
+  font-size: 12px;
+}
+
+.palette-shortcut-card p {
+  margin-top: 6px;
+  color: #667085;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.palette-shortcut-card .button.ghost {
+  margin-top: 8px;
+}
+
+.palette-shortcut-card .shortcut-recorder.compact {
+  min-width: 110px;
+  min-height: 30px;
+  padding: 5px 8px;
+  font-size: 11px;
+}
+
+.palette-shortcut-feedback {
+  display: none;
+  padding: 0 !important;
+}
+
+.palette-shortcut-feedback.visible {
+  display: block;
+}
+
+.palette-shortcut-feedback.error {
+  color: #be123c !important;
+}
+
+.palette-shortcut-feedback.success {
+  color: #047857 !important;
+}
+
 .editor-pane {
   padding: 26px 30px;
 }

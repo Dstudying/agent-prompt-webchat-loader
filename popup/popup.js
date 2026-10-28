@@ -14,6 +14,7 @@ const elements = {
   feedback: document.getElementById("feedback"),
   importAll: document.getElementById("import-all"),
   openOptions: document.getElementById("open-options"),
+  paletteShortcutValue: document.getElementById("palette-shortcut-value"),
   profileCount: document.getElementById("profile-count"),
   profileList: document.getElementById("profile-list"),
   shortcutSettings: document.getElementById("shortcut-settings"),
@@ -39,11 +40,21 @@ function clearFeedback() {
 
 async function renderShortcut() {
   try {
-    const commands = await chrome.commands.getAll();
+    const [commands, stored] = await Promise.all([
+      chrome.commands.getAll(),
+      chrome.storage.local.get(AgentProfileModel.PALETTE_SHORTCUT_KEY)
+    ]);
     const command = commands.find((entry) => entry.name === "inject-agents");
     elements.shortcutValue.textContent = command?.shortcut || "未设置";
+    const paletteShortcut = AgentProfileModel.normalizePaletteShortcut(
+      stored[AgentProfileModel.PALETTE_SHORTCUT_KEY]
+    );
+    elements.paletteShortcutValue.textContent = (
+      AgentProfileModel.formatShortcut(paletteShortcut) || "未设置"
+    );
   } catch (_error) {
     elements.shortcutValue.textContent = "查看设置";
+    elements.paletteShortcutValue.textContent = "查看设置";
   }
 }
 
